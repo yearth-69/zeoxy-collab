@@ -40,23 +40,28 @@ async function makeSign(
     .digest("hex");
 }
 
-async function requireAdmin(
-  supabase: {
-    rpc: (
-      name: string,
-      args: Record<string, unknown>,
-    ) => Promise<{ data: unknown; error: unknown }>;
-  },
-  userId: string,
-) {
-  const { data, error } = await supabase.rpc("has_role", {
-    _user_id: userId,
-    _role: "admin",
-  });
+async function requireAdmin(userId: string) {
+  const { supabaseAdmin } = await import(
+    "@/integrations/supabase/client.server"
+  );
 
-  if (error || !data) {
+  const { data, error } = await supabaseAdmin
+    .from("user_roles")
+    .select("user_id")
+    .eq("user_id", userId)
+    .eq("role", "admin")
+    .maybeSingle();
+
+  if (error) {
+    console.error("[SmileAdmin] Admin role check failed:", error);
+    throw error;
+  }
+
+  if (!data) {
     throw new Error("Forbidden");
   }
+
+  return supabaseAdmin;
 }
 
 async function postForm(
@@ -98,9 +103,9 @@ export const listSmileProducts = createServerFn({ method: "POST" })
   .inputValidator((data) => listProductsSchema.parse(data))
   .middleware([requireSupabaseAuth])
   .handler(async ({ context, data }) => {
-    const { supabase, userId } = context;
+    const { userId } = context;
 
-    await requireAdmin(supabase as any, userId);
+    await requireAdmin(userId);
 
     const email = process.env["SMILE_ONE_EMAIL"]?.trim();
     const uid = process.env["SMILE_ONE_UID"]?.trim();
@@ -169,9 +174,9 @@ export const assignSmileProduct = createServerFn({
   .inputValidator((data) => assignProductSchema.parse(data))
   .middleware([requireSupabaseAuth])
   .handler(async ({ context, data }) => {
-    const { supabase, userId } = context;
+    const { userId } = context;
 
-    await requireAdmin(supabase as any, userId);
+    await requireAdmin(userId);
 
     const { supabaseAdmin } =
       await import(
