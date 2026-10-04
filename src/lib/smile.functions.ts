@@ -21,8 +21,6 @@ async function makeSign(
   params: Record<string, string>,
   merchantKey: string,
 ): Promise<string> {
-  // Load Node crypto only when this server function executes.
-  // This prevents Vite from bundling node:crypto into the browser.
   const { createHash } = await import("node:crypto");
 
   const source =
@@ -53,9 +51,19 @@ async function requireAdmin(userId: string) {
     .maybeSingle();
 
   if (error) {
-    console.error("[SmileAdmin] Admin role check failed:", error);
+    console.error(
+      "[SmileAdmin] Admin role check failed:",
+      error,
+    );
     throw error;
   }
+
+  if (!data) {
+    throw new Error("Forbidden");
+  }
+
+  return supabaseAdmin;
+}
 
 async function postForm(
   url: string,
@@ -82,9 +90,10 @@ async function postForm(
 
   if (!response.ok) {
     throw new Error(
-      `Smile One HTTP ${response.status}: ${typeof parsed === "object" && parsed !== null
-        ? JSON.stringify(parsed)
-        : text.slice(0, 300)
+      `Smile One HTTP ${response.status}: ${
+        typeof parsed === "object" && parsed !== null
+          ? JSON.stringify(parsed)
+          : text.slice(0, 300)
       }`,
     );
   }
@@ -92,17 +101,26 @@ async function postForm(
   return parsed;
 }
 
-export const listSmileProducts = createServerFn({ method: "POST" })
-  .inputValidator((data) => listProductsSchema.parse(data))
+export const listSmileProducts = createServerFn({
+  method: "POST",
+})
+  .inputValidator((data) =>
+    listProductsSchema.parse(data),
+  )
   .middleware([requireSupabaseAuth])
   .handler(async ({ context, data }) => {
     const { userId } = context;
 
     await requireAdmin(userId);
 
-    const email = process.env["SMILE_ONE_EMAIL"]?.trim();
-    const uid = process.env["SMILE_ONE_UID"]?.trim();
-    const key = process.env["SMILE_ONE_KEY"]?.trim();
+    const email =
+      process.env["SMILE_ONE_EMAIL"]?.trim();
+
+    const uid =
+      process.env["SMILE_ONE_UID"]?.trim();
+
+    const key =
+      process.env["SMILE_ONE_KEY"]?.trim();
 
     const baseUrl =
       process.env["SMILE_ONE_API_URL"]?.trim() ||
@@ -142,7 +160,7 @@ export const listSmileProducts = createServerFn({ method: "POST" })
     if (result?.status !== 200) {
       throw new Error(
         result?.message ||
-        "Smile One product list request failed",
+          "Smile One product list request failed",
       );
     }
 
@@ -164,7 +182,9 @@ export const listSmileProducts = createServerFn({ method: "POST" })
 export const assignSmileProduct = createServerFn({
   method: "POST",
 })
-  .inputValidator((data) => assignProductSchema.parse(data))
+  .inputValidator((data) =>
+    assignProductSchema.parse(data),
+  )
   .middleware([requireSupabaseAuth])
   .handler(async ({ context, data }) => {
     const { userId } = context;
@@ -188,7 +208,9 @@ export const assignSmileProduct = createServerFn({
     }
 
     if (!pack) {
-      throw new Error("Recharge package not found");
+      throw new Error(
+        "Recharge package not found",
+      );
     }
 
     const { error } =
