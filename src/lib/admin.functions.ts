@@ -2,10 +2,35 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
-async function requireAdmin(supabase: { rpc: (name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }> }, userId: string) {
-  const { data, error } = await supabase.rpc("has_role", { _user_id: userId, _role: "admin" });
-  if (error || !data) throw new Error("Forbidden");
+
+async function requireAdmin(
+  _supabase: unknown,
+  userId: string,
+) {
+  const { supabaseAdmin } = await import(
+    "@/integrations/supabase/client.server"
+  );
+
+  const { data, error } = await supabaseAdmin
+    .from("user_roles")
+    .select("user_id")
+    .eq("user_id", userId)
+    .eq("role", "admin")
+    .maybeSingle();
+
+  if (error) {
+    console.error(
+      "[Admin] Admin role lookup failed:",
+      error,
+    );
+    throw error;
+  }
+
+  if (!data) {
+    throw new Error("Forbidden");
+  }
 }
+
 
 export const listAdmins = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
