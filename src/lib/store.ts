@@ -48,6 +48,7 @@ export type Pack = {
   is_popular: boolean;
   is_active: boolean;
   sort_order: number;
+  package_type: "single" | "bundle";
 };
 
 export type Order = {
@@ -110,18 +111,25 @@ export const packsQuery = (
       opts?.includeInactive ?? false,
     ],
     queryFn: async (): Promise<Pack[]> => {
-      let q = supabase.from("packages").select("*").order("sort_order");
+      let q = (supabase as any).from("packages").select("*").order("sort_order");
       if (gameId) q = q.eq("game_id", gameId);
       if (!opts?.includeInactive) q = q.eq("is_active", true);
       const { data, error } = await q;
       if (error) throw error;
 
-      return (data ?? []).map((p) => ({
+      return (data ?? []).map((p: any) => ({
         ...p,
-        image_url:
-          (p as { image_url?: string | null }).image_url ?? null,
         price: Number(p.price),
         smile_coin_cost: Number(p.smile_coin_cost ?? 0),
+        smile_product_id:
+          p.smile_product_id != null
+            ? String(p.smile_product_id)
+            : null,
+        image_url:
+          typeof p.image_url === "string" && p.image_url.trim()
+            ? p.image_url
+            : null,
+        package_type: p.package_type === "bundle" ? "bundle" : "single",
       })) as Pack[];
     },
   });
@@ -214,7 +222,7 @@ export const discounted = (price: number, percent: number) => {
 
 export async function uploadStoreImage(
   file: File,
-  folder: "games" | "banners" = "games",
+  folder: "games" | "banners" | "packages" = "games",
 ): Promise<string> {
   const MAX_SIZE = 5 * 1024 * 1024;
   const allowedTypes = [

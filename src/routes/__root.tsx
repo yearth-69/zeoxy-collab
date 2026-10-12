@@ -36,36 +36,37 @@ function NotFoundComponent() {
   );
 }
 
-function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
+function ErrorComponent({
+  error,
+  reset,
+}: {
+  error: unknown;
+  reset: () => void;
+}) {
   console.error(error);
+
   const router = useRouter();
+
   useEffect(() => {
-    reportLovableError(error, { boundary: "tanstack_root_error_component" });
+    if (error instanceof Error) {
+      reportLovableError(error, {
+        boundary: "tanstack_root_error_component",
+      });
+    } else {
+      reportLovableError(new Error(String(error)), {
+        boundary: "tanstack_root_error_component",
+      });
+    }
   }, [error]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="glass-panel max-w-md rounded-3xl p-8 text-center">
-        <h1 className="font-display text-xl font-semibold tracking-tight">This page didn't load</h1>
-        <p className="mt-2 text-sm text-subtle">Something went wrong. Try again or head back.</p>
-        <div className="mt-6 flex flex-wrap justify-center gap-2">
-          <button
-            onClick={() => {
-              router.invalidate();
-              reset();
-            }}
-            className="brand-gradient inline-flex items-center justify-center rounded-xl px-4 py-2.5 font-display text-sm font-semibold text-ink"
-          >
-            Try again
-          </button>
-          <a
-            href="/"
-            className="glass-panel inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-medium"
-          >
-            Go home
-          </a>
-        </div>
-      </div>
+    <div>
+      <h1>Something went wrong</h1>
+      <p></p>
+
+      <button onClick={reset}>
+        Try again
+      </button>
     </div>
   );
 }

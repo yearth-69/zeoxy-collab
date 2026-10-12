@@ -46,6 +46,7 @@ import {
   listAdminInvites,
   listAdmins,
   listClients,
+  listOrderCustomerPhones,
   removeAdmin,
   reorderGames,
 } from "@/lib/admin.functions";
@@ -594,6 +595,8 @@ function PackagesTab() {
     is_popular: boolean;
     is_active: boolean;
     sort_order: string;
+    package_type: "single" | "bundle";
+    components_json: string;
   };
   const empty: PackForm = {
     label: "",
@@ -606,6 +609,8 @@ function PackagesTab() {
     is_popular: false,
     is_active: true,
     sort_order: "0",
+    package_type: "single",
+    components_json: "[]",
   };
   const [form, setForm] = useState<PackForm>({ ...empty });
   const [editing, setEditing] = useState<string | null>(null);
@@ -628,18 +633,47 @@ function PackagesTab() {
       return;
     }
 
-    if (!form.smile_product_id.trim()) {
-      toast.error("Smile Product ID is required");
+    let components: Array<{ component_label: string; amount: number; smile_coin_cost: number; smile_product_id: string; quantity: number; sort_order: number; source_package_id?: string | null }> = [];
+    if (form.package_type === "bundle") {
+      try {
+        const parsed: unknown = JSON.parse(form.components_json || "[]");
+        if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("Add at least one component");
+        components = parsed.map((item, index) => {
+          const c = item as Record<string, unknown>;
+          const productId = String(c["smile_product_id"] ?? "").trim();
+          const label = String(c["component_label"] ?? c["label"] ?? `Component ${index + 1}`).trim();
+          const quantity = Number(c["quantity"] ?? 1);
+          const cost = Number(c["smile_coin_cost"] ?? 0);
+          const amount = Number(c["amount"] ?? 0);
+          if (!productId) throw new Error(`Component ${index + 1} needs smile_product_id`);
+          if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) throw new Error(`Component ${index + 1} quantity must be 1–99`);
+          if (!Number.isFinite(cost) || cost < 0 || !Number.isFinite(amount) || amount < 0) throw new Error(`Component ${index + 1} has an invalid amount/cost`);
+          return { component_label: label || `Component ${index + 1}`, amount, smile_coin_cost: cost, smile_product_id: productId, quantity, sort_order: index, source_package_id: c["source_package_id"] ? String(c["source_package_id"]) : null };
+        });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Invalid component JSON");
+        return;
+      }
+    }
+    const primaryProductId = form.package_type === "bundle"
+      ? components[0]?.smile_product_id ?? ""
+      : form.smile_product_id.trim();
+    if (!primaryProductId) {
+      toast.error("Smile Product ID is required (for bundles, set it on the first component)");
       return;
     }
+    const totalCoinCost = form.package_type === "bundle"
+      ? components.reduce((sum, c) => sum + c["smile_coin_cost"] * c["quantity"], 0)
+      : coins;
 
     const payload = {
       game_id: gameId,
       label: form.label.trim(),
       amount: Number(form.amount) || 0,
       price: Number(form.price) || 0,
-      smile_coin_cost: Number(form.smile_coin_cost) || 0,
-      smile_product_id: form.smile_product_id.trim(),
+      smile_coin_cost: totalCoinCost,
+      smile_product_id: primaryProductId,
+      package_type: form.package_type,
       image_url: form.image_url || null,
       bonus_text: form.bonus_text || null,
       is_popular: form.is_popular,
@@ -648,12 +682,23 @@ function PackagesTab() {
     };
     const packagesTable = supabase.from("packages") as any;
 
-    const { error } = editing
-      ? await packagesTable.update(payload).eq("id", editing)
-      : await packagesTable.insert(payload);
-    if (error) {
-      toast.error(error.message);
-      return;
+    let savedPackageId = editing;
+    if (editing) {
+      const { error } = await packagesTable.update(payload).eq("id", editing);
+      if (error) { toast.error(error.message); return; }
+    } else {
+      const { data: inserted, error } = await packagesTable.insert(payload).select("id").single();
+      if (error) { toast.error(error.message); return; }
+      savedPackageId = inserted.id;
+    }
+    if (savedPackageId) {
+      const { error: deleteComponentsError } = await ((supabase as any).from("package_components")).delete().eq("bundle_package_id", savedPackageId);
+      if (deleteComponentsError) { toast.error(`Package saved, but components could not be replaced: ${deleteComponentsError.message}`); return; }
+      if (form.package_type === "bundle") {
+        const rows = components.map((c) => ({ ...c, bundle_package_id: savedPackageId }));
+        const { error: componentError } = await ((supabase as any).from("package_components")).insert(rows);
+        if (componentError) { toast.error(`Package saved, but components failed: ${componentError.message}`); return; }
+      }
     }
     toast.success(editing ? "Package updated" : "Package added");
     setForm({ ...empty });
@@ -670,8 +715,19 @@ function PackagesTab() {
     qc.invalidateQueries({ queryKey: ["packages"] });
   }
 
-  function edit(p: Pack) {
+  async function edit(p: Pack) {
     setEditing(p.id);
+    let componentsJson = "[]";
+    if ((p as any).package_type === "bundle") {
+      const { data, error } = await ((supabase as any).from("package_components"))
+        .select("component_label, amount, smile_coin_cost, smile_product_id, quantity, source_package_id")
+        .eq("bundle_package_id", p.id).order("sort_order");
+      if (error) { toast.error(`Could not load bundle components: ${error.message}`); return; }
+      componentsJson = JSON.stringify((data ?? []).map((c: any) => ({
+        component_label: c["component_label"], amount: Number(c["amount"]), smile_coin_cost: Number(c["smile_coin_cost"]),
+        smile_product_id: c["smile_product_id"], quantity: Number(c["quantity"]), source_package_id: c["source_package_id"],
+      })), null, 2);
+    }
     setForm({
       label: p.label,
       amount: String(p.amount),
@@ -687,6 +743,8 @@ function PackagesTab() {
       is_popular: p.is_popular,
       is_active: p.is_active,
       sort_order: String(p.sort_order),
+      package_type: ((p as any).package_type === "bundle" ? "bundle" : "single"),
+      components_json: componentsJson,
     });
   }
 
@@ -702,6 +760,7 @@ function PackagesTab() {
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <label><Label>Label</Label><input className={field} value={form.label} onChange={(e) => set("label", e.target.value)} placeholder="500 Gems" /></label>
           <label><Label>Amount</Label><input type="number" className={field} value={form.amount} onChange={(e) => set("amount", e.target.value)} /></label>
+          <label><Label>Package type</Label><select className={field} value={form.package_type} onChange={(e) => set("package_type", e.target.value as "single" | "bundle")}><option value="single">Single product</option><option value="bundle">Multi-product bundle</option></select></label>
           <label>
             <Label>Smile Coin cost</Label>
             <input
@@ -716,20 +775,15 @@ function PackagesTab() {
               placeholder="65"
             />
           </label>
-          <label>
+          {form.package_type === "single" ? <label>
             <Label>Smile Product ID</Label>
-            <input
-              className={field}
-              value={form.smile_product_id}
-              onChange={(e) =>
-                set("smile_product_id", e.target.value)
-              }
-              placeholder="e.g. 123456"
-            />
-          </label>
-          <p className="sm:col-span-2 -mt-1 text-[10px] text-faint">
-            Enter the Smile One product ID here so this package is ready for checkout immediately.
-          </p>
+            <input className={field} value={form.smile_product_id} onChange={(e) => set("smile_product_id", e.target.value)} placeholder="e.g. 123456" />
+          </label> : null}
+          {form.package_type === "bundle" ? <div className="sm:col-span-2">
+            <Label>Bundle components (JSON)</Label>
+            <textarea className={`${field} min-h-48 font-mono text-xs`} value={form.components_json} onChange={(e) => set("components_json", e.target.value)} spellCheck={false} />
+            <p className="mt-1 text-[10px] text-faint">Each component needs component_label, smile_product_id, smile_coin_cost, and quantity. Optional: amount and source_package_id. Example JSON: component_label, smile_product_id, smile_coin_cost, quantity</p>
+          </div> : <p className="sm:col-span-2 -mt-1 text-[10px] text-faint">Enter the Smile One product ID so this package is ready for checkout immediately.</p>}
 
           <div className="sm:col-span-2">
             <Label>Package image</Label>
@@ -756,7 +810,7 @@ function PackagesTab() {
 
                     setUploading(true);
                     try {
-                      const url = await uploadStoreImage(file);
+                      const url = await uploadStoreImage(file, "packages");
                       set("image_url", url);
                       toast.success("Package image uploaded");
                     } catch (error) {
@@ -794,7 +848,9 @@ function PackagesTab() {
         {(() => {
           const previewPack = {
             price: Number(form.price) || 0,
-            smile_coin_cost: Number(form.smile_coin_cost) || 0,
+            smile_coin_cost: form.package_type === "bundle"
+              ? (() => { try { const list = JSON.parse(form.components_json || "[]"); return Array.isArray(list) ? list.reduce((sum: number, c: any) => sum + (Number(c["smile_coin_cost"]) || 0) * (Number(c["quantity"]) || 1), 0) : 0; } catch { return 0; } })()
+              : Number(form.smile_coin_cost) || 0,
           };
           const preview = computePricing(previewPack, rate);
           const usesFallback = hasFallbackPrice(previewPack);
@@ -895,6 +951,7 @@ function PackagesTab() {
                 <p className="truncate font-display text-sm font-semibold">{p.label}</p>
                 <p className="text-[11px] text-faint">
                 {money(customerPrice(p, rate, settings?.discount_percent ?? 0))}
+                {(p as any).package_type === "bundle" ? " · bundle" : ""}
                 {p.smile_coin_cost ? ` · ${p.smile_coin_cost} coins` : ""}
                 {(p as Pack & { smile_product_id?: string | number }).smile_product_id
                   ? ` · Product ${String(
@@ -1077,6 +1134,8 @@ function BannersTab() {
 
 function OrdersTab() {
   type PaymentAwareOrder = Order & {
+    user_id?: string | null;
+    customer_phone?: string | null;
     payment_status?: string | null;
     payment_remark?: string | null;
     paid_at?: string | null;
@@ -1092,6 +1151,7 @@ function OrdersTab() {
   };
 
   const qc = useQueryClient();
+  const listOrderCustomerPhonesFn = useServerFn(listOrderCustomerPhones);
   const [selectedOrder, setSelectedOrder] =
     useState<PaymentAwareOrder | null>(null);
 
@@ -1113,7 +1173,25 @@ function OrdersTab() {
 
       if (error) throw error;
 
-      return (data ?? []) as unknown as PaymentAwareOrder[];
+      const rows = (data ?? []) as unknown as PaymentAwareOrder[];
+      const userIds = [
+        ...new Set(
+          rows
+            .map((order) => order.user_id)
+            .filter((id): id is string => typeof id === "string" && id.length > 0),
+        ),
+      ];
+      const phonesByUserId = await listOrderCustomerPhonesFn({
+        data: { userIds },
+      });
+
+      return rows.map((order) => ({
+        ...order,
+        customer_phone:
+          typeof order.user_id === "string"
+            ? phonesByUserId[order.user_id] || null
+            : null,
+      }));
     },
     refetchInterval: 4000,
     refetchOnWindowFocus: true,
@@ -1128,6 +1206,17 @@ function OrdersTab() {
   const { data: packs = [] } = useQuery(
     packsQuery(undefined, { includeInactive: true }),
   );
+  const { data: orderDeliveries = [] } = useQuery({
+    queryKey: ["order-deliveries", "admin"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("order_deliveries")
+        .select("id, order_id, component_label, smile_product_id, status, smile_order_id, error_message, attempt_count")
+        .order("created_at", { ascending: false }).limit(2000);
+      if (error) throw error;
+      return (data ?? []) as Array<{ id: string; order_id: string; component_label: string; smile_product_id: string; status: string; smile_order_id: string | null; error_message: string | null; attempt_count: number }>;
+    },
+    refetchInterval: 4000,
+  });
 
   function paymentStatus(order: PaymentAwareOrder) {
     const raw = String(order.payment_status ?? "").toLowerCase();
@@ -1306,6 +1395,15 @@ function OrdersTab() {
                 </div>
               </div>
 
+              {orderDeliveries.some((d) => d.order_id === o.id) ? <div className="mt-3 space-y-1 border-t border-white/10 pt-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-faint">Smile One delivery items</p>
+                {orderDeliveries.filter((d) => d.order_id === o.id).map((d) => <div key={d.id} className="flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                  <span className="min-w-0 truncate text-subtle">{d.component_label} · Product {d.smile_product_id}{d.smile_order_id ? ` · Order ${d.smile_order_id}` : ""}</span>
+                  <span className={d.status === "success" ? "text-lime" : d.status === "failed" ? "text-rose" : "text-amber"}>{d.status}{d.attempt_count ? ` · ${d.attempt_count} attempt(s)` : ""}</span>
+                  {d.error_message ? <span className="w-full break-words text-rose">{d.error_message}</span> : null}
+                </div>)}
+              </div> : null}
+
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-white/10 pt-3">
                 <div className="min-w-0 space-y-1 text-[10px] text-faint">
                   {o.upiqrx_upi_txn_id ? (
@@ -1444,6 +1542,21 @@ function OrdersTab() {
                           ? ` · ${o.player_server}`
                           : ""}
                       </p>
+                      <p className="mt-2 text-[11px] text-faint">
+                        Registered mobile
+                      </p>
+                      {o.customer_phone ? (
+                        <a
+                          href={`tel:${o.customer_phone}`}
+                          className="mt-0.5 inline-flex break-all text-sm font-medium text-cyan-300 hover:underline"
+                        >
+                          {o.customer_phone}
+                        </a>
+                      ) : (
+                        <p className="mt-0.5 text-sm text-subtle">
+                          Not available
+                        </p>
+                      )}
                     </div>
 
                     <div className="rounded-2xl border border-white/10 bg-white/5 p-3">

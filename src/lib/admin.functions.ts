@@ -2,10 +2,35 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
-async function requireAdmin(supabase: { rpc: (name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }> }, userId: string) {
-  const { data, error } = await supabase.rpc("has_role", { _user_id: userId, _role: "admin" });
-  if (error || !data) throw new Error("Forbidden");
+
+async function requireAdmin(
+  _supabase: unknown,
+  userId: string,
+) {
+  const { supabaseAdmin } = await import(
+    "@/integrations/supabase/client.server"
+  );
+
+  const { data, error } = await supabaseAdmin
+    .from("user_roles")
+    .select("user_id")
+    .eq("user_id", userId)
+    .eq("role", "admin")
+    .maybeSingle();
+
+  if (error) {
+    console.error(
+      "[Admin] Admin role lookup failed:",
+      error,
+    );
+    throw error;
+  }
+
+  if (!data) {
+    throw new Error("Forbidden");
+  }
 }
+
 
 export const listAdmins = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -271,4 +296,35 @@ export const updateContactMessageStatus = createServerFn({ method: "POST" })
     if (error) throw error;
 
     return { ok: true };
+  });
+
+
+const listOrderCustomerPhonesSchema = z.object({
+  userIds: z.array(z.string().uuid()).max(500),
+});
+
+/**
+ * Returns registered profile phone numbers only to an authenticated admin.
+ * Order rows reference auth users; the phone number lives in profiles.phone.
+ */
+export const listOrderCustomerPhones = createServerFn({ method: "POST" })
+  .inputValidator((data) => listOrderCustomerPhonesSchema.parse(data))
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context, data }) => {
+    const { supabase, userId } = context;
+    await requireAdmin(supabase as any, userId);
+
+    if (!data.userIds.length) return {} as Record<string, string>;
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: profiles, error } = await supabaseAdmin
+      .from("profiles")
+      .select("id, phone")
+      .in("id", data.userIds);
+
+    if (error) throw error;
+
+    return Object.fromEntries(
+      (profiles ?? []).map((profile) => [profile.id, profile.phone ?? ""]),
+    ) as Record<string, string>;
   });

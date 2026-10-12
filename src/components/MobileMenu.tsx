@@ -90,9 +90,8 @@ export function MobileDrawer({ open, onClose, actions }: DrawerProps) {
       <div
         aria-hidden
         onClick={onClose}
-        className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-300 sm:hidden ${
-          open ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
+        className={`fixed inset-0 z-40 bg-black/60 backdrop-blur-sm transition-opacity duration-300 sm:hidden ${open ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
       />
 
       {/* Drawer */}
@@ -100,16 +99,17 @@ export function MobileDrawer({ open, onClose, actions }: DrawerProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Navigation menu"
-        className={`fixed inset-y-0 left-0 z-50 flex w-[280px] max-w-[85vw] flex-col border-r border-black/10 shadow-2xl backdrop-blur-xl transition-transform duration-300 ease-out sm:hidden dark:border-white/10 dark:bg-[#0b0f14]/90 ${
-          open ? "translate-x-0" : "-translate-x-full"
-        } bg-background/95`}
+        className={`fixed inset-y-0 left-0 z-50 flex w-[280px] max-w-[85vw] flex-col border-r border-black/10 shadow-2xl backdrop-blur-xl transition-transform duration-300 ease-out sm:hidden dark:border-white/10 dark:bg-[#0b0f14]/90 ${open ? "translate-x-0" : "-translate-x-full"
+          } bg-background/95`}
       >
         {/* Header: logo + close */}
         <div className="flex items-center justify-between border-b border-black/10 px-4 py-4 dark:border-white/10">
           <Link to="/" onClick={onClose} className="flex items-center gap-2">
-            <div className="brand-gradient grid size-9 place-items-center rounded-xl font-display font-bold text-ink">
-              R
-            </div>
+            <img
+              src="/logo.jpeg"
+              alt="ZEXY STORE"
+              className="h-9 w-9 shrink-0 rounded-xl object-contain"
+            />
             <div>
               <p className="font-display text-base font-semibold leading-none tracking-tight text-ink">
                 ZEXY STORE
