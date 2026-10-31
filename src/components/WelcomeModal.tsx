@@ -22,32 +22,19 @@ type WelcomeContent = {
   coupon: { code: string; discountPercent: number } | null;
 };
 
-const SEEN_KEY = "zeoxy_welcome_seen_v1";
-const TEST_MODE = false; // Set to false after testing.
-
 /**
- * Protect against the welcome popup being mounted by more than one SiteHeader
- * or layout at the same time. Only one instance may own the popup.
+ * A module-level guard survives SPA route changes but resets on a full
+ * browser reload. This makes the popup appear once per document load.
  */
-let activeWelcomeModalInstance: symbol | null = null;
-
-function markWelcomeAsSeen() {
-  if (TEST_MODE) return;
-
-  try {
-    window.localStorage.setItem(SEEN_KEY, "1");
-  } catch {
-    // Storage can be disabled; the in-memory dismissal guard still applies.
-  }
-}
+let welcomePopupClaimedForDocument = false;
 
 export function WelcomeModal() {
   const getContent = useServerFn(getPublicWelcomeContent);
   const getContentRef = useRef(getContent);
-  const instanceIdRef = useRef(Symbol("zeoxy-welcome-modal"));
   const dismissedRef = useRef(false);
+  const claimedByThisInstanceRef = useRef(false);
+  const mountedRef = useRef(false);
 
-  const [isOwner, setIsOwner] = useState(false);
   const [content, setContent] = useState<WelcomeContent | null>(null);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -57,57 +44,43 @@ export function WelcomeModal() {
   }, [getContent]);
 
   useEffect(() => {
-    const instanceId = instanceIdRef.current;
-
-    // Another mounted instance already owns the popup.
-    if (
-      activeWelcomeModalInstance &&
-      activeWelcomeModalInstance !== instanceId
-    ) {
-      return;
+    // React StrictMode runs effect setup/cleanup/setup on the same instance.
+    // Re-arm that instance without claiming a second popup or timer.
+    if (claimedByThisInstanceRef.current) {
+      mountedRef.current = true;
+      return () => {
+        mountedRef.current = false;
+      };
     }
 
-    activeWelcomeModalInstance = instanceId;
-    setIsOwner(true);
+    // Another WelcomeModal already handled this full page load.
+    if (welcomePopupClaimedForDocument) return;
 
-    let cancelled = false;
-    let timer: number | undefined;
+    welcomePopupClaimedForDocument = true;
+    claimedByThisInstanceRef.current = true;
+    mountedRef.current = true;
 
-    const releaseOwnership = () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      if (activeWelcomeModalInstance === instanceId) {
-        activeWelcomeModalInstance = null;
-      }
-    };
-
-    if (!TEST_MODE) {
-      try {
-        if (window.localStorage.getItem(SEEN_KEY) === "1") {
-          return releaseOwnership;
-        }
-      } catch {
-        // Storage can be disabled; the popup can still show for this visit.
-      }
-    }
-
-    timer = window.setTimeout(async () => {
-      if (cancelled || dismissedRef.current) return;
+    // Do not clear this timer in effect cleanup: StrictMode's simulated
+    // cleanup would cancel it. The mountedRef guard prevents updates after
+    // a real unmount (for example, during SPA navigation).
+    window.setTimeout(async () => {
+      if (!mountedRef.current || dismissedRef.current) return;
 
       setLoading(true);
 
       try {
         const result = await getContentRef.current();
 
-        if (cancelled || dismissedRef.current || !result.isEnabled) return;
+        if (!mountedRef.current || dismissedRef.current || !result.isEnabled) {
+          return;
+        }
 
         setContent(result);
-        markWelcomeAsSeen();
         setOpen(true);
       } catch (error) {
-        if (cancelled || dismissedRef.current) return;
+        if (!mountedRef.current || dismissedRef.current) return;
 
         console.error("[Welcome modal] Could not load public welcome content", error);
-
         setContent({
           isEnabled: true,
           title: "Welcome to Zeoxy Store",
@@ -117,17 +90,14 @@ export function WelcomeModal() {
           communityLabel: "Join our community",
           coupon: null,
         });
-
-        markWelcomeAsSeen();
         setOpen(true);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (mountedRef.current) setLoading(false);
       }
     }, 900);
 
     return () => {
-      cancelled = true;
-      releaseOwnership();
+      mountedRef.current = false;
     };
   }, []);
 
@@ -145,7 +115,6 @@ export function WelcomeModal() {
 
   function dismiss() {
     dismissedRef.current = true;
-    markWelcomeAsSeen();
     setOpen(false);
   }
 
@@ -160,7 +129,7 @@ export function WelcomeModal() {
     }
   }
 
-  if (!isOwner || !open || !content || loading) return null;
+  if (!open || !content || loading) return null;
 
   return (
     <div
@@ -170,7 +139,7 @@ export function WelcomeModal() {
       }}
     >
       <section
-        className="relative isolate w-full max-w-md min-w-0 max-h-[calc(100dvh-1.5rem)] overflow-hidden rounded-[1.5rem] border border-white/20 bg-[#121a36]/90 p-4 shadow-[0_20px_70px_rgba(0,0,0,.32)] backdrop-blur-2xl sm:max-h-[calc(100dvh-2.5rem)] sm:p-5"
+        className="relative isolate w-full max-w-md min-w-0 max-h-[calc(100dvh-1.5rem)] overflow-hidden rounded-[1.5rem] border border-white/20 bg-[#121a36]/75 p-4 shadow-[0_20px_70px_rgba(0,0,0,.32)] backdrop-blur-2xl sm:max-h-[calc(100dvh-2.5rem)] sm:p-5"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
@@ -300,10 +269,16 @@ export function WelcomeModal() {
             Explore Zeoxy Store
             <ArrowRight className="size-3.5" />
           </button>
+
+          <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[9px] text-slate-400">
+            <Check className="size-3 shrink-0" />
+            This popup appears once until you reload the website.
+          </p>
         </div>
       </section>
     </div>
   );
 }
+
 
 
