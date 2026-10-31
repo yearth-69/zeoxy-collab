@@ -32,7 +32,7 @@ const primaryClass = "brand-gradient inline-flex items-center justify-center gap
 const secondaryClass = "glass-panel inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-medium transition hover:border-violet/30";
 const emptyWelcome: WelcomeForm = {
   isEnabled: true,
-  title: "Welcome to Zeoxy Store",
+  title: "Welcome to Zexy Store",
   subtitle: "Your game top-ups, store offers and important updates — all in one place.",
   communityUrl: "",
   communityLabel: "Join our community",

@@ -3,11 +3,8 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   ArrowRight,
   BellRing,
-  Check,
-  Copy,
-  Gift,
   Sparkles,
-  Users,
+  TicketPercent,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -23,10 +20,14 @@ type WelcomeContent = {
 };
 
 /**
- * A module-level guard survives SPA route changes but resets on a full
- * browser reload. This makes the popup appear once per document load.
+ * This guard survives SPA route changes and resets on a full browser reload.
+ * It also prevents two mounted SiteHeader instances from opening two popups.
  */
 let welcomePopupClaimedForDocument = false;
+
+const POPUP_TITLE = "DON'T MISS THE NEXT DROP!";
+const POPUP_SUBTITLE =
+  "Join the official Zeoxy WhatsApp Channel and unlock access to exclusive deals, coupon giveaways and the latest updates.";
 
 export function WelcomeModal() {
   const getContent = useServerFn(getPublicWelcomeContent);
@@ -45,7 +46,6 @@ export function WelcomeModal() {
 
   useEffect(() => {
     // React StrictMode runs effect setup/cleanup/setup on the same instance.
-    // Re-arm that instance without claiming a second popup or timer.
     if (claimedByThisInstanceRef.current) {
       mountedRef.current = true;
       return () => {
@@ -53,24 +53,18 @@ export function WelcomeModal() {
       };
     }
 
-    // Another WelcomeModal already handled this full page load.
     if (welcomePopupClaimedForDocument) return;
 
     welcomePopupClaimedForDocument = true;
     claimedByThisInstanceRef.current = true;
     mountedRef.current = true;
 
-    // Do not clear this timer in effect cleanup: StrictMode's simulated
-    // cleanup would cancel it. The mountedRef guard prevents updates after
-    // a real unmount (for example, during SPA navigation).
     window.setTimeout(async () => {
       if (!mountedRef.current || dismissedRef.current) return;
 
       setLoading(true);
-
       try {
         const result = await getContentRef.current();
-
         if (!mountedRef.current || dismissedRef.current || !result.isEnabled) {
           return;
         }
@@ -83,11 +77,10 @@ export function WelcomeModal() {
         console.error("[Welcome modal] Could not load public welcome content", error);
         setContent({
           isEnabled: true,
-          title: "Welcome to Zeoxy Store",
-          subtitle:
-            "Your game top-ups, store offers and important updates — all in one place.",
+          title: POPUP_TITLE,
+          subtitle: POPUP_SUBTITLE,
           communityUrl: null,
-          communityLabel: "Join our community",
+          communityLabel: "JOIN WHATSAPP CHANNEL",
           coupon: null,
         });
         setOpen(true);
@@ -101,15 +94,18 @@ export function WelcomeModal() {
     };
   }, []);
 
-  // Stop the page behind the popup from scrolling while it is open.
+  // Lock the page behind the welcome dialog, while preserving prior inline style.
   useEffect(() => {
     if (!open) return;
 
     const previousOverflow = document.body.style.overflow;
+    const previousOverscroll = document.body.style.overscrollBehavior;
     document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
 
     return () => {
       document.body.style.overflow = previousOverflow;
+      document.body.style.overscrollBehavior = previousOverscroll;
     };
   }, [open]);
 
@@ -118,167 +114,135 @@ export function WelcomeModal() {
     setOpen(false);
   }
 
-  async function copyCoupon() {
-    if (!content?.coupon?.code) return;
-
-    try {
-      await navigator.clipboard.writeText(content.coupon.code);
-      toast.success("Coupon code copied");
-    } catch {
-      toast.error("Could not copy the code. Please copy it manually.");
+  function joinCommunity() {
+    if (!content?.communityUrl) {
+      toast.info("WhatsApp channel link has not been configured yet.");
+      return;
     }
+    dismiss();
   }
 
   if (!open || !content || loading) return null;
 
   return (
     <div
-      className="fixed inset-0 z-[100] grid place-items-center overflow-hidden bg-[#050817]/25 p-3 backdrop-blur-[2px] sm:p-5"
+      className="fixed inset-0 z-[100] grid place-items-center overflow-hidden bg-[#050817]/35 p-3 backdrop-blur-[3px] sm:p-5"
       onClick={(event) => {
         if (event.target === event.currentTarget) dismiss();
       }}
     >
       <section
-        className="relative isolate w-full max-w-md min-w-0 max-h-[calc(100dvh-1.5rem)] overflow-hidden rounded-[1.5rem] border border-white/20 bg-[#121a36]/75 p-4 shadow-[0_20px_70px_rgba(0,0,0,.32)] backdrop-blur-2xl sm:max-h-[calc(100dvh-2.5rem)] sm:p-5"
+        className="relative isolate w-full max-w-md min-w-0 max-h-[calc(100dvh-1.5rem)] overflow-hidden rounded-[1.5rem] border border-white/15 bg-[#101b34]/95 p-4 shadow-[0_24px_80px_rgba(0,0,0,.48)] backdrop-blur-2xl sm:p-5"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="zeoxy-welcome-title"
       >
-        {/* Soft glass highlights */}
-        <div className="pointer-events-none absolute -right-16 -top-20 size-48 rounded-full bg-violet/15 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-20 -left-16 size-44 rounded-full bg-cyan/10 blur-3xl" />
+        <div className="pointer-events-none absolute -right-20 -top-24 size-56 rounded-full bg-violet/15 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 -left-20 size-52 rounded-full bg-cyan/10 blur-3xl" />
 
         <div className="relative min-w-0">
           <div className="flex items-center justify-between gap-3">
-            <span className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-cyan/25 bg-cyan/10 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[.16em] text-cyan">
-              <Sparkles className="size-3 shrink-0" />
-              <span>Welcome to Zeoxy</span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+              <Sparkles className="size-3.5 fill-current" />
+              Exclusive Access
             </span>
-
             <button
               type="button"
               onClick={dismiss}
               aria-label="Close welcome popup"
               title="Close"
-              className="grid size-8 shrink-0 place-items-center rounded-full border border-white/15 bg-white/10 text-slate-200 transition hover:border-white/25 hover:bg-white/20 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan/50"
+              className="grid size-8 shrink-0 place-items-center rounded-full text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/60"
             >
               <X className="size-4" />
             </button>
           </div>
 
+          {/* Add the transparent artwork at public/welcome-popup-art.png (600×300). */}
+          <div className="relative mt-2.5 flex aspect-[2/1] w-full items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#18295a] via-[#111d45] to-[#09152d]">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(59,130,246,.35),transparent_65%)]" />
+            <img
+              src="/welcome-popup-art.png"
+              alt="Zeoxy exclusive coupons and rewards"
+              width={600}
+              height={300}
+              className="relative z-[1] h-full w-full object-contain"
+              onError={(event) => {
+                // Keep the styled banner placeholder until the user adds the artwork.
+                event.currentTarget.style.display = "none";
+              }}
+            />
+          </div>
+
           <h2
             id="zeoxy-welcome-title"
-            className="mt-3 break-words font-display text-lg font-bold leading-tight text-white sm:text-xl"
+            className="mt-3 font-display text-xl font-bold leading-tight text-white sm:text-2xl"
           >
-            {content.title}
+            {content.title?.trim() && content.title !== "Welcome to Zeoxy Store"
+              ? content.title
+              : POPUP_TITLE}
           </h2>
-          <p className="mt-1 text-xs leading-relaxed text-slate-200/90">
-            {content.subtitle}
+          <p className="mt-1.5 text-xs leading-relaxed text-slate-300 sm:text-sm">
+            {content.subtitle?.trim() &&
+            content.subtitle !==
+              "Your game top-ups, store offers and important updates — all in one place."
+              ? content.subtitle
+              : POPUP_SUBTITLE}
           </p>
 
-          {content.coupon ? (
-            <div className="mt-3 min-w-0 rounded-xl border border-lime-200/25 bg-lime-200/[.08] p-3 backdrop-blur-md">
-              <div className="flex min-w-0 items-center justify-between gap-2">
-                <span className="inline-flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[.14em] text-lime-200">
-                  <Gift className="size-3.5 shrink-0" />
-                  Live coupon
-                </span>
-                <span className="shrink-0 rounded-full border border-lime-200/20 bg-lime-200/10 px-2 py-0.5 text-[9px] font-semibold text-lime-100">
-                  Currently active
-                </span>
-              </div>
-
-              <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="break-all font-display text-lg font-bold tracking-[.1em] text-lime-200">
-                    {content.coupon.code}
-                  </p>
-                  <p className="mt-0.5 text-[10px] text-slate-200/80">
-                    Up to {content.coupon.discountPercent}% off eligible packages
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={copyCoupon}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-lime-200/25 bg-lime-200/10 px-3 py-2 text-[10px] font-semibold text-lime-100 transition hover:bg-lime-200/15"
-                >
-                  <Copy className="size-3" />
-                  Copy code
-                </button>
-              </div>
-
-              <p className="mt-2 text-[9px] leading-relaxed text-slate-300/75">
-                Actual savings depend on the package's available Smile Coin
-                profit margin. Some packages may receive a smaller discount.
-              </p>
-            </div>
-          ) : null}
-
           <div className="mt-3 grid min-w-0 grid-cols-2 gap-2">
-            <div className="min-w-0 rounded-xl border border-white/15 bg-white/[.07] p-2.5 backdrop-blur-md">
-              <div className="grid size-7 place-items-center rounded-lg bg-violet/15 text-violet-200">
-                <BellRing className="size-3.5" />
-              </div>
-              <p className="mt-1.5 font-display text-xs font-semibold text-white">
-                Stay in the loop
+            <div className="min-w-0 rounded-2xl border border-white/[.06] bg-[#23324f]/85 p-3">
+              <TicketPercent className="size-5 text-violet-400" />
+              <p className="mt-2 font-display text-sm font-semibold text-white">
+                Exclusive Coupons
               </p>
-              <p className="mt-1 break-words text-[10px] leading-relaxed text-slate-300/85">
-                Get store announcements, offers and important updates.
+              <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+                Special discounts and coupon giveaways.
               </p>
             </div>
 
-            <div className="min-w-0 rounded-xl border border-white/15 bg-white/[.07] p-2.5 backdrop-blur-md">
-              <div className="grid size-7 place-items-center rounded-lg bg-cyan/15 text-cyan">
-                <Users className="size-3.5" />
-              </div>
-              <p className="mt-1.5 font-display text-xs font-semibold text-white">
-                Join the community
+            <div className="min-w-0 rounded-2xl border border-white/[.06] bg-[#23324f]/85 p-3">
+              <BellRing className="size-5 text-cyan-400" />
+              <p className="mt-2 font-display text-sm font-semibold text-white">
+                Latest Updates
               </p>
-              <p className="mt-1 break-words text-[10px] leading-relaxed text-slate-300/85">
-                Keep up with Zeoxy news and new store updates.
+              <p className="mt-1 text-[11px] leading-relaxed text-slate-300">
+                Offers, announcements and new drops.
               </p>
-
-              {content.communityUrl ? (
-                <a
-                  href={content.communityUrl}
-                  target={
-                    content.communityUrl.startsWith("/") ? undefined : "_blank"
-                  }
-                  rel="noreferrer"
-                  onClick={dismiss}
-                  className="mt-2 inline-flex max-w-full items-center gap-1 break-words text-[10px] font-semibold text-cyan hover:underline"
-                >
-                  {content.communityLabel}
-                  <ArrowRight className="size-3 shrink-0" />
-                </a>
-              ) : (
-                <span className="mt-2 inline-flex text-[9px] text-slate-400">
-                  Community link coming soon
-                </span>
-              )}
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={dismiss}
-            className="brand-gradient mt-3 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-display text-xs font-semibold text-ink shadow-lg shadow-violet/10 transition hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-cyan/50"
-          >
-            Explore Zeoxy Store
-            <ArrowRight className="size-3.5" />
-          </button>
+          {content.communityUrl ? (
+            <a
+              href={content.communityUrl}
+              target={content.communityUrl.startsWith("/") ? undefined : "_blank"}
+              rel="noreferrer"
+              onClick={joinCommunity}
+              className="mt-3 flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-[#18cf69] px-4 py-3 text-center font-display text-sm font-bold uppercase text-[#062b19] shadow-lg shadow-emerald-500/10 transition hover:bg-[#20df75] focus:outline-none focus:ring-2 focus:ring-emerald-300 focus:ring-offset-2 focus:ring-offset-[#101b34]"
+            >
+              Join WhatsApp Channel
+              <ArrowRight className="size-4" />
+            </a>
+          ) : (
+            <button
+              type="button"
+              onClick={joinCommunity}
+              className="mt-3 flex min-h-14 w-full items-center justify-center gap-2 rounded-full bg-[#18cf69] px-4 py-3 text-center font-display text-sm font-bold uppercase text-[#062b19] opacity-90"
+            >
+              Join WhatsApp Channel
+              <ArrowRight className="size-4" />
+            </button>
+          )}
 
-          <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-[9px] text-slate-400">
-            <Check className="size-3 shrink-0" />
-            This popup appears once until you reload the website.
+          <p className="mt-2.5 text-center text-[10px] text-slate-400">
+            Free to join · Stay updated · Never miss a deal
           </p>
         </div>
       </section>
     </div>
   );
 }
+
 
 
 

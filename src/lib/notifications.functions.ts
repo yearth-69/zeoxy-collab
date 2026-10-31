@@ -51,7 +51,7 @@ export const getPublicWelcomeContent = createServerFn({ method: "GET" }).handler
 
   return {
     isEnabled: settings?.is_enabled ?? true,
-    title: String(settings?.title ?? "Welcome to Zeoxy Store"),
+    title: String(settings?.title ?? "Welcome to Zexy Store"),
     subtitle: String(settings?.subtitle ?? "Your game top-ups, store offers and important updates — all in one place."),
     communityUrl: settings?.community_url ? String(settings.community_url) : null,
     communityLabel: String(settings?.community_label ?? "Join our community"),
@@ -75,7 +75,7 @@ export const getAdminNotificationData = createServerFn({ method: "GET" })
       notifications: notifications ?? [],
       welcomeSettings: welcomeSettings ?? {
         is_enabled: true,
-        title: "Welcome to Zeoxy Store",
+        title: "Welcome to Zexy Store",
         subtitle: "Your game top-ups, store offers and important updates — all in one place.",
         community_url: null,
         community_label: "Join our community",

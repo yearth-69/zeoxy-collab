@@ -235,8 +235,8 @@ export function NotificationBell() {
             onClick={() => setOpen(false)}
           />
 
-          <section className="absolute right-0 top-[calc(100%+12px)] z-50 w-[min(92vw,390px)] overflow-hidden rounded-2xl border border-white/10 bg-[#101832]/95 shadow-[0_24px_80px_rgba(0,0,0,.5)] backdrop-blur-2xl">
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3.5">
+          <section className="fixed left-3 right-3 top-[76px] z-50 mx-auto flex max-h-[calc(100dvh-6rem)] w-auto max-w-[390px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#101832]/95 shadow-[0_24px_80px_rgba(0,0,0,.5)] backdrop-blur-2xl sm:absolute sm:left-auto sm:right-0 sm:top-[calc(100%+12px)] sm:mx-0 sm:max-h-[min(70vh,480px)] sm:w-[min(92vw,390px)]">
+            <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3.5">
               <div className="flex items-center gap-2.5">
                 <span className="grid size-8 place-items-center rounded-xl bg-violet/15 text-violet-200">
                   <BellRing className="size-4" />
@@ -276,7 +276,7 @@ export function NotificationBell() {
               </div>
             </div>
 
-            <div className="max-h-[min(65vh,480px)] overflow-y-auto p-2">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2 sm:max-h-[min(65vh,480px)]">
               {isLoading ? (
                 <p className="px-4 py-8 text-center text-xs text-slate-400">
                   Loading updates…
@@ -353,7 +353,7 @@ export function NotificationBell() {
               ))}
             </div>
 
-            <div className="border-t border-white/10 px-4 py-2.5 text-center text-[10px] text-slate-500">
+            <div className="shrink-0 border-t border-white/10 px-4 py-2.5 text-center text-[10px] text-slate-500">
               Zeoxy Store · Updates for your account
             </div>
           </section>
@@ -362,3 +362,4 @@ export function NotificationBell() {
     </div>
   );
 }
+
