@@ -55,7 +55,6 @@ import {
   type SmileProduct,
 } from "@/lib/smile.functions";
 import { ContactMessagesTab } from "@/components/ContactMessagesTab";
-import { NotificationAdminTab } from "@/components/NotificationAdminTab";
 
 const uploadGameImage = uploadStoreImage;
 
@@ -84,7 +83,6 @@ const TABS = [
   "Smile Products",
   "Smile Coin",
   "Discount",
-  "Notifications",
   "Admins",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -147,7 +145,6 @@ function AdminPage() {
         {tab === "Smile Products" && <SmileProductsTab />}
         {tab === "Smile Coin" && <SmileCoinTab />}
         {tab === "Discount" && <DiscountTab />}
-        {tab === "Notifications" && <NotificationAdminTab />}
         {tab === "Admins" && <AdminsTab />}
       </div>
     </div>
@@ -2026,6 +2023,8 @@ function DiscountTab() {
   const [couponPercent, setCouponPercent] = useState("2");
   const [maxUses, setMaxUses] = useState("100");
   const [couponBusy, setCouponBusy] = useState(false);
+  const [editingCouponId, setEditingCouponId] = useState<string | null>(null);
+  const [couponActionId, setCouponActionId] = useState<string | null>(null);
   const [coupons, setCoupons] = useState<Array<{id:string; code:string; discount_percent:number; max_uses:number|null; uses_count:number; is_active:boolean; created_at:string}>>([]);
 
   useEffect(() => { if (settings) setValue(String(settings.discount_percent)); }, [settings]);
@@ -2045,23 +2044,111 @@ function DiscountTab() {
     toast.success(percent ? `${percent}% off applied site-wide` : "Discount turned off");
     qc.invalidateQueries({ queryKey: ["site-settings"] });
   }
-  async function createCoupon() {
+  function resetCouponForm() {
+    setEditingCouponId(null);
+    setCouponCode("");
+    setCouponPercent("2");
+    setMaxUses("100");
+  }
+
+  function editCoupon(c: typeof coupons[number]) {
+    setEditingCouponId(c.id);
+    setCouponCode(c.code);
+    setCouponPercent(String(c.discount_percent));
+    setMaxUses(String(c.max_uses ?? 100));
+    document.getElementById("zeoxy-coupon-form")?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }
+
+  async function saveCoupon() {
     const code = couponCode.trim().toUpperCase().replace(/\s+/g, "");
     const discount = Number(couponPercent);
     const limit = Number(maxUses);
-    if (!/^[A-Z0-9_-]{3,32}$/.test(code)) { toast.error("Use 3–32 letters, numbers, _ or - for the code"); return; }
-    if (!Number.isFinite(discount) || discount <= 0 || discount > 100) { toast.error("Coupon discount must be between 0.01 and 100%"); return; }
-    if (!Number.isInteger(limit) || limit < 1 || limit > 1000000) { toast.error("Maximum uses must be a whole number from 1 to 1,000,000"); return; }
+
+    if (!/^[A-Z0-9_-]{3,32}$/.test(code)) {
+      toast.error("Use 3–32 letters, numbers, _ or - for the code");
+      return;
+    }
+    if (!Number.isFinite(discount) || discount <= 0 || discount > 100) {
+      toast.error("Coupon discount must be between 0.01 and 100%");
+      return;
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000000) {
+      toast.error("Maximum uses must be a whole number from 1 to 1,000,000");
+      return;
+    }
+
     setCouponBusy(true);
-    const { error } = await (supabase as any).from("coupons").insert({ code, discount_percent: discount, max_uses: limit, is_active: true });
+    const query = (supabase as any).from("coupons");
+
+    const { error } = editingCouponId
+      ? await query
+          .update({
+            code,
+            discount_percent: discount,
+            max_uses: limit,
+          })
+          .eq("id", editingCouponId)
+      : await query.insert({
+          code,
+          discount_percent: discount,
+          max_uses: limit,
+          is_active: true,
+        });
+
     setCouponBusy(false);
-    if (error) { toast.error(error.code === "23505" ? "That coupon code already exists" : error.message); return; }
-    setCouponCode(""); toast.success(`Coupon ${code} created`); await loadCoupons();
+
+    if (error) {
+      toast.error(
+        error.code === "23505"
+          ? "That coupon code already exists"
+          : error.message,
+      );
+      return;
+    }
+
+    toast.success(
+      editingCouponId
+        ? `Coupon ${code} updated`
+        : `Coupon ${code} created`,
+    );
+    resetCouponForm();
+    await loadCoupons();
   }
+
+  async function deleteCoupon(c: typeof coupons[number]) {
+    const confirmed = window.confirm(
+      `Delete coupon "${c.code}" permanently? This action cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setCouponActionId(c.id);
+    const { error } = await (supabase as any)
+      .from("coupons")
+      .delete()
+      .eq("id", c.id);
+    setCouponActionId(null);
+
+    if (error) {
+      toast.error(`Could not delete ${c.code}: ${error.message}`);
+      return;
+    }
+
+    if (editingCouponId === c.id) resetCouponForm();
+    toast.success(`Coupon ${c.code} deleted`);
+    await loadCoupons();
+  }
+
   async function toggleCoupon(c: typeof coupons[number]) {
-    const { error } = await (supabase as any).from("coupons").update({ is_active: !c.is_active }).eq("id", c.id);
+    const { error } = await (supabase as any)
+      .from("coupons")
+      .update({ is_active: !c.is_active })
+      .eq("id", c.id);
     if (error) { toast.error(error.message); return; }
-    toast.success(c.is_active ? `${c.code} deactivated` : `${c.code} activated`); await loadCoupons();
+    toast.success(c.is_active ? `${c.code} deactivated` : `${c.code} activated`);
+    await loadCoupons();
   }
   return (
     <div className="space-y-5">
@@ -2078,19 +2165,80 @@ function DiscountTab() {
           <p className="mt-3 text-[11px] text-faint">Currently live: {settings?.discount_percent ?? 0}% off</p>
         </div>
       </div>
-      <div className="glass-panel rounded-2xl p-4">
-        <p className="font-display text-sm font-semibold">Create Coupon</p>
+      <div id="zeoxy-coupon-form" className="glass-panel rounded-2xl p-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-display text-sm font-semibold">
+            {editingCouponId ? "Edit Coupon" : "Create Coupon"}
+          </p>
+          {editingCouponId ? (
+            <button type="button" className={btn} onClick={resetCouponForm}>
+              Cancel edit
+            </button>
+          ) : null}
+        </div>
         <p className="mt-1 text-[11px] text-faint">Coupon discount is capped by the live Smile Coin rate profit %. The requested coupon % is limited to that rate margin, then limited again to the remaining package profit after the global discount. The final price never goes below real cost.</p>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           <label><Label>Coupon code</Label><input className={field} placeholder="PUJA2" maxLength={32} value={couponCode} onChange={(e) => setCouponCode(e.target.value.toUpperCase().replace(/\s+/g, ""))}/></label>
           <label><Label>Discount (%)</Label><input className={field} type="number" min="0.01" max="100" step="0.01" value={couponPercent} onChange={(e) => setCouponPercent(e.target.value)}/></label>
           <label><Label>Maximum uses</Label><input className={field} type="number" min="1" step="1" value={maxUses} onChange={(e) => setMaxUses(e.target.value)}/></label>
         </div>
-        <button className={`${primary} mt-4`} disabled={couponBusy} onClick={createCoupon}>{couponBusy ? "Creating…" : "Create Coupon"}</button>
+        <button
+          type="button"
+          className={`${primary} mt-4`}
+          disabled={couponBusy}
+          onClick={() => void saveCoupon()}
+        >
+          {couponBusy
+            ? editingCouponId ? "Saving…" : "Creating…"
+            : editingCouponId ? "Save Changes" : "Create Coupon"}
+        </button>
       </div>
       <div className="glass-panel rounded-2xl p-4">
         <div className="flex items-center justify-between gap-3"><p className="font-display text-sm font-semibold">Coupons</p><button className={btn} onClick={() => void loadCoupons()}>Refresh</button></div>
-        {coupons.length === 0 ? <p className="mt-4 text-xs text-faint">No coupons created yet.</p> : <div className="mt-3 space-y-2">{coupons.map((c) => <div key={c.id} className="flex flex-col gap-3 rounded-xl border border-white/10 p-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><span className="font-display text-sm font-semibold">{c.code}</span><span className={`rounded-full px-2 py-0.5 text-[10px] ${c.is_active && (c.max_uses == null || c.uses_count < c.max_uses) ? "bg-lime/10 text-lime" : "bg-red-500/10 text-red-300"}`}>{!c.is_active ? "Deactivated" : c.max_uses != null && c.uses_count >= c.max_uses ? "Limit reached" : "Active"}</span></div><p className="mt-1 text-xs text-faint">{c.discount_percent}% off profit · Used {c.uses_count}/{c.max_uses ?? "∞"}</p></div><button className={btn} onClick={() => void toggleCoupon(c)}>{c.is_active ? "Deactivate" : "Activate"}</button></div>)}</div>}
+        {coupons.length === 0 ? <p className="mt-4 text-xs text-faint">No coupons created yet.</p> : <div className="mt-3 space-y-2">{coupons.map((c) => (
+            <div
+              key={c.id}
+              className="flex flex-col gap-3 rounded-xl border border-white/10 p-3 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-display text-sm font-semibold">{c.code}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${c.is_active && (c.max_uses == null || c.uses_count < c.max_uses) ? "bg-lime/10 text-lime" : "bg-red-500/10 text-red-300"}`}>
+                    {!c.is_active ? "Deactivated" : c.max_uses != null && c.uses_count >= c.max_uses ? "Limit reached" : "Active"}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-faint">
+                  {c.discount_percent}% off profit · Used {c.uses_count}/{c.max_uses ?? "∞"}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                <button
+                  type="button"
+                  className={btn}
+                  disabled={couponActionId === c.id}
+                  onClick={() => void toggleCoupon(c)}
+                >
+                  {c.is_active ? "Deactivate" : "Activate"}
+                </button>
+                <button
+                  type="button"
+                  className={btn}
+                  onClick={() => editCoupon(c)}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className={`${btn} border border-red-400/20 text-red-300 hover:bg-red-500/10`}
+                  disabled={couponActionId === c.id}
+                  onClick={() => void deleteCoupon(c)}
+                >
+                  {couponActionId === c.id ? "Deleting…" : "Delete"}
+                </button>
+              </div>
+            </div>
+          ))}</div>}
       </div>
     </div>
   );
