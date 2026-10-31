@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
-import { orderPricing, type CoinRate } from "@/lib/pricing";
+import { orderPricing, profitCappedCoupon, type CoinRate } from "@/lib/pricing";
 
 
 
@@ -17,6 +17,7 @@ const schema = z.object({
   playerRef: z.string().trim().min(1).max(60),
 
   playerServer: z.string().trim().max(20).nullable().optional(),
+  couponCode: z.string().trim().max(32).optional(),
 
 });
 
@@ -584,12 +585,8 @@ export const createUpiPayment = createServerFn({ method: "POST" })
 
 
     if (!Number.isFinite(pricing.selling_price) || pricing.selling_price <= 0) {
-
       throw new Error("Invalid payment amount");
-
     }
-
-
 
     const playerRef = data.playerRef.trim();
 
@@ -612,6 +609,41 @@ export const createUpiPayment = createServerFn({ method: "POST" })
       playerServer,
 
     });
+
+    // Reserve a coupon use only after the player ID has been verified.
+    // The amount is calculated from the active Smile Coin markup, never from
+    // a client-supplied price or discount value.
+    let couponReservationKey: string | null = null;
+    let couponCode: string | null = null;
+    let couponDiscount = 0;
+    let finalSellingPrice = Number(pricing.selling_price);
+    if (data.couponCode?.trim()) {
+      const normalizedCode = data.couponCode.trim().toUpperCase().replace(/\s+/g, "");
+      if (!/^[A-Z0-9_-]{3,32}$/.test(normalizedCode)) throw new Error("Coupon invalid");
+      couponReservationKey = globalThis.crypto.randomUUID();
+      const { data: reserved, error: reserveError } = await (supabaseAdmin as any).rpc("reserve_coupon", {
+        p_code: normalizedCode,
+        p_user_id: userId,
+        p_reservation_key: couponReservationKey,
+      });
+      if (reserveError) throw reserveError;
+      const reservation = Array.isArray(reserved) ? reserved[0] : reserved;
+      if (!reservation?.coupon_id) throw new Error("Coupon invalid");
+      couponCode = String(reservation.code);
+
+      const couponResult = profitCappedCoupon(
+        pricing,
+        Number(reservation.discount_percent),
+        Number(activeRate?.profit_percent ?? 0),
+      );
+      couponDiscount = couponResult.discountAmount;
+      finalSellingPrice = couponResult.finalPrice;
+      if (couponDiscount <= 0 || finalSellingPrice < Number(pricing.real_cost) || finalSellingPrice <= 0) {
+        await (supabaseAdmin as any).rpc("release_coupon", { p_reservation_key: couponReservationKey });
+        throw new Error("Already applied — this package has no additional discount available.");
+      }
+    }
+
 
 
 
@@ -639,7 +671,7 @@ export const createUpiPayment = createServerFn({ method: "POST" })
 
           player_server: playerServer || null,
 
-          amount: pricing.amount,
+          amount: finalSellingPrice,
 
           smile_coin_cost: pricing.smile_coin_cost,
 
@@ -649,9 +681,11 @@ export const createUpiPayment = createServerFn({ method: "POST" })
 
           profit_percent: pricing.profit_percent,
 
-          selling_price: pricing.selling_price,
+          selling_price: finalSellingPrice,
 
-          profit: pricing.profit,
+          profit: Math.round((finalSellingPrice - Number(pricing.real_cost)) * 100) / 100,
+          coupon_code: couponCode,
+          coupon_discount: couponDiscount,
 
           status: "pending",
 
@@ -669,7 +703,24 @@ export const createUpiPayment = createServerFn({ method: "POST" })
 
 
 
-    if (createOrderError) throw createOrderError;
+    if (createOrderError) {
+      if (couponReservationKey) await (supabaseAdmin as any).rpc("release_coupon", { p_reservation_key: couponReservationKey });
+      throw createOrderError;
+    }
+    if (couponReservationKey) {
+      const { data: linkedReservation, error: linkError } = await (supabaseAdmin as any)
+        .from("coupon_redemptions")
+        .update({ order_id: createdOrder.id, discount_amount: couponDiscount })
+        .eq("reservation_key", couponReservationKey)
+        .eq("status", "reserved")
+        .select("id")
+        .maybeSingle();
+      if (linkError || !linkedReservation) {
+        await (supabaseAdmin as any).from("orders").update({ status: "failed", payment_status: "failed", payment_remark: "Coupon reservation link failed" }).eq("id", createdOrder.id);
+        await (supabaseAdmin as any).rpc("release_coupon", { p_reservation_key: couponReservationKey });
+        throw linkError ?? new Error("Coupon reservation could not be linked to the order");
+      }
+    }
 
 
 
@@ -707,6 +758,7 @@ export const createUpiPayment = createServerFn({ method: "POST" })
 
 
 
+      if (couponReservationKey) await (supabaseAdmin as any).rpc("release_coupon", { p_reservation_key: couponReservationKey });
       throw new Error("Missing UPIQRX_API_KEY");
 
     }
@@ -739,53 +791,42 @@ export const createUpiPayment = createServerFn({ method: "POST" })
 
 
 
-    const gatewayResponse = await fetch(
-
-      "https://api.upiqrx.in/api/create_order",
-
-      {
-
-        method: "POST",
-
-        headers: {
-
-          "Content-Type": "application/json",
-
+    let gatewayResponse: Response;
+    try {
+      gatewayResponse = await fetch(
+        "https://api.upiqrx.in/api/create_order",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            key: gatewayKey,
+            client_txn_id: clientTxnId,
+            amount: Number(finalSellingPrice).toFixed(2),
+            p_info: `${game.name} - ${pack.label}`,
+            customer_name: customerName,
+            customer_email: customerEmail,
+            customer_mobile: customerMobile,
+            redirect_url:
+              `${publicAppUrl}/payment/pending?txn=${encodeURIComponent(clientTxnId)}` +
+              `&order=${encodeURIComponent(createdOrder.id)}`,
+            udf1: String(createdOrder.id).slice(0, 25),
+            udf2: nickname.slice(0, 25),
+            udf3: "",
+          }),
         },
-
-        body: JSON.stringify({
-
-          key: gatewayKey,
-
-          client_txn_id: clientTxnId,
-
-          amount: Number(pricing.selling_price).toFixed(2),
-
-          p_info: `${game.name} - ${pack.label}`,
-
-          customer_name: customerName,
-
-          customer_email: customerEmail,
-
-          customer_mobile: customerMobile,
-
-          redirect_url:
-
-            `${publicAppUrl}/payment/pending?txn=${encodeURIComponent(clientTxnId)}` +
-
-            `&order=${encodeURIComponent(createdOrder.id)}`,
-
-          udf1: String(createdOrder.id).slice(0, 25),
-
-          udf2: nickname.slice(0, 25),
-
-          udf3: "",
-
-        }),
-
-      },
-
-    );
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "UPIQRX connection failed";
+      await (supabaseAdmin as any)
+        .from("orders")
+        .update({ status: "failed", payment_status: "failed", payment_remark: message.slice(0, 500) })
+        .eq("id", createdOrder.id)
+        .eq("payment_status", "pending");
+      if (couponReservationKey) {
+        await (supabaseAdmin as any).rpc("release_coupon", { p_reservation_key: couponReservationKey });
+      }
+      throw new Error(message);
+    }
 
 
 
@@ -817,8 +858,7 @@ export const createUpiPayment = createServerFn({ method: "POST" })
 
         .eq("id", createdOrder.id);
 
-
-
+      if (couponReservationKey) await (supabaseAdmin as any).rpc("release_coupon", { p_reservation_key: couponReservationKey });
       throw new Error(message);
 
     }
@@ -851,6 +891,7 @@ export const createUpiPayment = createServerFn({ method: "POST" })
 
 
 
+      if (couponReservationKey) await (supabaseAdmin as any).rpc("release_coupon", { p_reservation_key: couponReservationKey });
       throw new Error("UPIQRX returned no payment_url");
 
     }
@@ -893,7 +934,7 @@ export const createUpiPayment = createServerFn({ method: "POST" })
 
       paymentUrl,
 
-      amount: pricing.selling_price,
+      amount: finalSellingPrice,
 
     };
 

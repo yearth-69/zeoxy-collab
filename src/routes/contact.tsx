@@ -24,12 +24,14 @@ const CHANNELS = [
     title: "Order support",
     sub: "Delivery in progress, stuck top-up",
     phone: "+91 94778 78717",
+    email: "admin@zexystore.in",
     wa: "https://wa.me/919477878717",
   },
   {
     title: "Payments & resellers",
     sub: "Failed payments, wholesale accounts",
     phone: "+91 94778 78717",
+    email: "admin@zexystore.in",
     wa: "https://wa.me/919477878717",
   },
 ];
@@ -110,6 +112,7 @@ function Contact() {
                 {c.sub}
               </p>
               <p className="mt-3 text-sm font-medium text-cyan">{c.phone}</p>
+              <p className="mt-3 text-sm font-medium text-cyan">{c.email}</p>
               <a
                 href={c.wa}
                 target="_blank"
@@ -193,15 +196,12 @@ function Contact() {
       <section className="mt-6 px-4 pb-6 sm:px-6">
         <div className="rounded-2xl border border-rose/30 bg-rose/10 p-5">
           <h3 className="font-display text-sm font-semibold text-rose">
-            ⚠ Only the two numbers above are ours
-          </h3>
-          <p className="mt-2 text-xs leading-relaxed text-faint">
-            We will never message you first asking for payment, and we will
+            ⚠ We will never message you first asking for payment, and we will
             never ask for your password, an OTP, or a transfer to a personal
-            account. Every payment happens on this site, at checkout. If
+            account.<br></br>Every payment happens on this site, at checkout. If
             someone claims to be us from any other number, they are not — stop
             and report it to the numbers above.
-          </p>
+          </h3>
         </div>
       </section>
     </PageShell>

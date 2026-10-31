@@ -119,3 +119,53 @@ export function orderPricing(
     amount,
   };
 }
+
+/**
+ * Applies a coupon only against the markup added by the currently active
+ * Smile Coin rate. The requested percentage is capped at that live markup
+ * percentage, then capped again at the remaining profit after any site-wide
+ * discount. The final price can therefore never fall below real_cost.
+ *
+ * The requested discount is a percentage of the customer-facing selling
+ * price, but the actual discount is capped by remaining profit so the final
+ * price never falls below real_cost.
+ */
+export function profitCappedCoupon(
+  pricing: Pricing & { amount: number },
+  couponPercent: number,
+  liveRateProfitPercent: number,
+) {
+  const configuredCouponPercent = Math.min(Math.max(Number(couponPercent) || 0, 0), 100);
+  const liveProfitPercent = Math.min(Math.max(Number(liveRateProfitPercent) || 0, 0), 100);
+  const effectivePercent = Math.min(configuredCouponPercent, liveProfitPercent);
+  const availableProfit = round2(Math.max(
+    0,
+    Math.min(
+      Number(pricing.profit) || 0,
+      Number(pricing.selling_price) - Number(pricing.real_cost),
+    ),
+  ));
+  // Apply the coupon percentage to the current customer-facing price
+  // (after any site-wide discount), not to the internal Smile Coin cost.
+  const currentSellingPrice = Math.max(0, Number(pricing.selling_price) || 0);
+  const requestedDiscount = round2(currentSellingPrice * effectivePercent / 100);
+  // Never discount more than the real profit still available on this package.
+  const discountAmount = round2(Math.min(requestedDiscount, availableProfit));
+  const finalPrice = round2(Math.max(
+    Number(pricing.real_cost) || 0,
+    currentSellingPrice - discountAmount,
+  ));
+  const actualDiscount = round2(currentSellingPrice - finalPrice);
+  const actualDiscountPercent = currentSellingPrice > 0
+    ? round2((actualDiscount / currentSellingPrice) * 100)
+    : 0;
+  return {
+    effectivePercent,
+    actualDiscountPercent,
+    requestedDiscount,
+    availableProfit,
+    discountAmount: actualDiscount,
+    finalPrice,
+  };
+}
+

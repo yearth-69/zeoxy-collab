@@ -91,6 +91,7 @@ import {
 
 
 import { createUpiPayment } from "@/lib/payment.functions";
+import { validateCoupon } from "@/lib/coupon.functions";
 
 
 
@@ -291,6 +292,7 @@ function TopUpPage() {
 
 
   const createPayment = useServerFn(createUpiPayment);
+  const checkCoupon = useServerFn(validateCoupon);
 
 
 
@@ -560,6 +562,18 @@ function TopUpPage() {
 
   >(null);
 
+  const [couponQuote, setCouponQuote] = useState<{
+    code: string;
+    originalPrice: number;
+    finalPrice: number;
+    discountAmount: number;
+    actualDiscountPercent: number;
+    requestedDiscountAmount: number;
+    isProfitCapped: boolean;
+  } | null>(null);
+
+  const [couponChecking, setCouponChecking] = useState(false);
+
 
 
 
@@ -611,6 +625,11 @@ function TopUpPage() {
         p.id === selected,
 
     );
+
+  useEffect(() => {
+    setAppliedCoupon(null);
+    setCouponQuote(null);
+  }, [selected, rate?.id, rate?.profit_percent, percent]);
 
 
 
@@ -1096,52 +1115,43 @@ function TopUpPage() {
 
    */
 
-  function applyCoupon() {
-
-    const code =
-
-      coupon
-
-        .trim()
-
-        .toUpperCase();
-
-
-
-
-
+  async function applyCoupon() {
+    const code = coupon.trim().toUpperCase().replace(/\s+/g, "");
     if (!code) {
-
-      toast.error(
-
-        "Enter a coupon code",
-
-      );
-
-
-
+      toast.error("Enter a coupon code");
       return;
-
     }
-
-
-
-
-
-    setAppliedCoupon(
-
-      code,
-
-    );
-
-
-
-    toast.success(
-
-      `Coupon ${code} applied`,
-
-    );
-
+    if (!game || !pack) {
+      toast.error("Select a recharge package first");
+      return;
+    }
+    setCouponChecking(true);
+    try {
+      const result = await checkCoupon({ data: { code, gameId: game.id, packageId: pack.id } });
+      if (result.valid === false) {
+        setAppliedCoupon(null);
+        setCouponQuote(null);
+        toast.error(result.message || "Coupon invalid");
+        return;
+      }
+      setAppliedCoupon(result.code);
+      setCouponQuote({
+        code: result.code,
+        originalPrice: result.originalPrice,
+        finalPrice: result.finalPrice,
+        discountAmount: result.discountAmount,
+        actualDiscountPercent: result.actualDiscountPercent,
+        requestedDiscountAmount: result.requestedDiscountAmount,
+        isProfitCapped: result.isProfitCapped,
+      });
+      toast.success(result.message || `${result.code} applied from the available Smile Coin profit.`);
+    } catch (error) {
+      setAppliedCoupon(null);
+      setCouponQuote(null);
+      toast.error(error instanceof Error ? error.message : "Coupon invalid");
+    } finally {
+      setCouponChecking(false);
+    }
   }
 
 
@@ -1381,6 +1391,7 @@ function TopUpPage() {
           playerRef: cleanUid,
 
           playerServer: game.requires_server_id ? cleanSid : null,
+          ...(appliedCoupon ? { couponCode: appliedCoupon } : {}),
 
         },
 
@@ -2177,23 +2188,20 @@ function TopUpPage() {
 
 
 
-                <span className="font-display font-semibold">
-
-                  {pack
-
-                    ? money(
-
-                      priceOf(
-
-                        pack,
-
-                      ),
-
-                    )
-
-                    : "—"}
-
-                </span>
+                {pack && couponQuote && appliedCoupon === couponQuote.code ? (
+                  <div className="flex flex-col items-end leading-tight">
+                    <span className="text-xs text-faint line-through">
+                      {money(couponQuote.originalPrice)}
+                    </span>
+                    <span className="font-display font-bold text-lime">
+                      {money(couponQuote.finalPrice)}
+                    </span>
+                  </div>
+                ) : (
+                  <span className="font-display font-semibold">
+                    {pack ? money(priceOf(pack)) : "—"}
+                  </span>
+                )}
 
 
 
@@ -2233,6 +2241,19 @@ function TopUpPage() {
 
                 </p>
 
+              ) : null}
+
+              {pack && couponQuote && appliedCoupon === couponQuote.code ? (
+                <div className="mt-1 space-y-0.5 text-right text-[11px]">
+                  <p className="font-medium text-lime">
+                    Coupon saved −{money(couponQuote.discountAmount)} ({couponQuote.actualDiscountPercent.toFixed(2)}% off)
+                  </p>
+                  {couponQuote.isProfitCapped ? (
+                    <p className="text-faint">
+                      Limited to the remaining Smile Coin profit (requested {money(couponQuote.requestedDiscountAmount)}).
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
 
 
@@ -2276,6 +2297,7 @@ function TopUpPage() {
                           null,
 
                         );
+                        setCouponQuote(null);
 
 
 
@@ -2349,7 +2371,7 @@ function TopUpPage() {
 
                       disabled={
 
-                        !coupon.trim()
+                        !coupon.trim() || couponChecking
 
                       }
 
@@ -2357,7 +2379,7 @@ function TopUpPage() {
 
                     >
 
-                      Apply
+                      {couponChecking ? "Checking…" : "Apply"}
 
                     </button>
 

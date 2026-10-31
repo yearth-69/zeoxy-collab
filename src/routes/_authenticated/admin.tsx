@@ -46,7 +46,6 @@ import {
   listAdminInvites,
   listAdmins,
   listClients,
-  listOrderCustomerPhones,
   removeAdmin,
   reorderGames,
 } from "@/lib/admin.functions";
@@ -56,6 +55,7 @@ import {
   type SmileProduct,
 } from "@/lib/smile.functions";
 import { ContactMessagesTab } from "@/components/ContactMessagesTab";
+import { NotificationAdminTab } from "@/components/NotificationAdminTab";
 
 const uploadGameImage = uploadStoreImage;
 
@@ -84,6 +84,7 @@ const TABS = [
   "Smile Products",
   "Smile Coin",
   "Discount",
+  "Notifications",
   "Admins",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -146,6 +147,7 @@ function AdminPage() {
         {tab === "Smile Products" && <SmileProductsTab />}
         {tab === "Smile Coin" && <SmileCoinTab />}
         {tab === "Discount" && <DiscountTab />}
+        {tab === "Notifications" && <NotificationAdminTab />}
         {tab === "Admins" && <AdminsTab />}
       </div>
     </div>
@@ -596,7 +598,20 @@ function PackagesTab() {
     is_active: boolean;
     sort_order: string;
     package_type: "single" | "bundle";
-    components_json: string;
+  };
+  type BundleComponentForm = {
+    component_label: string;
+    smile_product_id: string;
+    smile_coin_cost: string;
+    quantity: string;
+    amount: string;
+  };
+  const emptyComponent: BundleComponentForm = {
+    component_label: "",
+    smile_product_id: "",
+    smile_coin_cost: "0",
+    quantity: "1",
+    amount: "0",
   };
   const empty: PackForm = {
     label: "",
@@ -610,13 +625,35 @@ function PackagesTab() {
     is_active: true,
     sort_order: "0",
     package_type: "single",
-    components_json: "[]",
   };
   const [form, setForm] = useState<PackForm>({ ...empty });
+  const [components, setComponents] = useState<BundleComponentForm[]>([
+    { ...emptyComponent },
+  ]);
   const [editing, setEditing] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const set = <K extends keyof PackForm>(k: K, v: PackForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
+
+  function updateComponent(
+    index: number,
+    key: keyof BundleComponentForm,
+    value: string,
+  ) {
+    setComponents((current) =>
+      current.map((component, i) =>
+        i === index ? { ...component, [key]: value } : component,
+      ),
+    );
+  }
+
+  function addComponent() {
+    setComponents((current) => [...current, { ...emptyComponent }]);
+  }
+
+  function removeComponent(index: number) {
+    setComponents((current) => current.filter((_, i) => i !== index));
+  }
 
   async function save() {
     if (!gameId) {
@@ -633,38 +670,82 @@ function PackagesTab() {
       return;
     }
 
-    let components: Array<{ component_label: string; amount: number; smile_coin_cost: number; smile_product_id: string; quantity: number; sort_order: number; source_package_id?: string | null }> = [];
+    const savedComponents: Array<{
+      component_label: string;
+      amount: number;
+      smile_coin_cost: number;
+      smile_product_id: string;
+      quantity: number;
+      sort_order: number;
+      source_package_id: string | null;
+    }> = [];
+
     if (form.package_type === "bundle") {
-      try {
-        const parsed: unknown = JSON.parse(form.components_json || "[]");
-        if (!Array.isArray(parsed) || parsed.length === 0) throw new Error("Add at least one component");
-        components = parsed.map((item, index) => {
-          const c = item as Record<string, unknown>;
-          const productId = String(c["smile_product_id"] ?? "").trim();
-          const label = String(c["component_label"] ?? c["label"] ?? `Component ${index + 1}`).trim();
-          const quantity = Number(c["quantity"] ?? 1);
-          const cost = Number(c["smile_coin_cost"] ?? 0);
-          const amount = Number(c["amount"] ?? 0);
-          if (!productId) throw new Error(`Component ${index + 1} needs smile_product_id`);
-          if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) throw new Error(`Component ${index + 1} quantity must be 1–99`);
-          if (!Number.isFinite(cost) || cost < 0 || !Number.isFinite(amount) || amount < 0) throw new Error(`Component ${index + 1} has an invalid amount/cost`);
-          return { component_label: label || `Component ${index + 1}`, amount, smile_coin_cost: cost, smile_product_id: productId, quantity, sort_order: index, source_package_id: c["source_package_id"] ? String(c["source_package_id"]) : null };
-        });
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Invalid component JSON");
+      if (components.length === 0) {
+        toast.error("Add at least one bundle product");
         return;
       }
+
+      for (const [index, component] of components.entries()) {
+        const label = component.component_label.trim();
+        const productId = component.smile_product_id.trim();
+        const cost = Number(component.smile_coin_cost);
+        const quantity = Number(component.quantity);
+        const amount = Number(component.amount);
+
+        if (!label) {
+          toast.error(`Product ${index + 1}: enter a product name`);
+          return;
+        }
+        if (!productId) {
+          toast.error(`Product ${index + 1}: enter Smile Product ID`);
+          return;
+        }
+        if (!Number.isFinite(cost) || cost < 0) {
+          toast.error(`Product ${index + 1}: invalid coin cost`);
+          return;
+        }
+        if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+          toast.error(`Product ${index + 1}: quantity must be 1–99`);
+          return;
+        }
+        if (!Number.isFinite(amount) || amount < 0) {
+          toast.error(`Product ${index + 1}: invalid amount`);
+          return;
+        }
+
+        savedComponents.push({
+          component_label: label,
+          amount,
+          smile_coin_cost: cost,
+          smile_product_id: productId,
+          quantity,
+          sort_order: index,
+          source_package_id: null,
+        });
+      }
     }
-    const primaryProductId = form.package_type === "bundle"
-      ? components[0]?.smile_product_id ?? ""
-      : form.smile_product_id.trim();
+
+    const primaryProductId =
+      form.package_type === "bundle"
+        ? savedComponents[0]?.smile_product_id ?? ""
+        : form.smile_product_id.trim();
+
     if (!primaryProductId) {
-      toast.error("Smile Product ID is required (for bundles, set it on the first component)");
+      toast.error(
+        "Smile Product ID is required (for bundles, enter it for the first product)",
+      );
       return;
     }
-    const totalCoinCost = form.package_type === "bundle"
-      ? components.reduce((sum, c) => sum + c["smile_coin_cost"] * c["quantity"], 0)
-      : coins;
+
+    const totalCoinCost =
+      form.package_type === "bundle"
+        ? savedComponents.reduce(
+            (sum, component) =>
+              sum + component.smile_coin_cost * component.quantity,
+            0,
+          )
+        : coins;
 
     const payload = {
       game_id: gameId,
@@ -695,13 +776,14 @@ function PackagesTab() {
       const { error: deleteComponentsError } = await ((supabase as any).from("package_components")).delete().eq("bundle_package_id", savedPackageId);
       if (deleteComponentsError) { toast.error(`Package saved, but components could not be replaced: ${deleteComponentsError.message}`); return; }
       if (form.package_type === "bundle") {
-        const rows = components.map((c) => ({ ...c, bundle_package_id: savedPackageId }));
+        const rows = savedComponents.map((c) => ({ ...c, bundle_package_id: savedPackageId }));
         const { error: componentError } = await ((supabase as any).from("package_components")).insert(rows);
         if (componentError) { toast.error(`Package saved, but components failed: ${componentError.message}`); return; }
       }
     }
     toast.success(editing ? "Package updated" : "Package added");
     setForm({ ...empty });
+    setComponents([{ ...emptyComponent }]);
     setEditing(null);
     qc.invalidateQueries({ queryKey: ["packages"] });
   }
@@ -717,17 +799,22 @@ function PackagesTab() {
 
   async function edit(p: Pack) {
     setEditing(p.id);
-    let componentsJson = "[]";
+    let loadedComponents: BundleComponentForm[] = [{ ...emptyComponent }];
     if ((p as any).package_type === "bundle") {
       const { data, error } = await ((supabase as any).from("package_components"))
-        .select("component_label, amount, smile_coin_cost, smile_product_id, quantity, source_package_id")
+        .select("component_label, amount, smile_coin_cost, smile_product_id, quantity")
         .eq("bundle_package_id", p.id).order("sort_order");
       if (error) { toast.error(`Could not load bundle components: ${error.message}`); return; }
-      componentsJson = JSON.stringify((data ?? []).map((c: any) => ({
-        component_label: c["component_label"], amount: Number(c["amount"]), smile_coin_cost: Number(c["smile_coin_cost"]),
-        smile_product_id: c["smile_product_id"], quantity: Number(c["quantity"]), source_package_id: c["source_package_id"],
-      })), null, 2);
+      loadedComponents = (data ?? []).map((c: any) => ({
+        component_label: String(c["component_label"] ?? ""),
+        smile_product_id: String(c["smile_product_id"] ?? ""),
+        smile_coin_cost: String(c["smile_coin_cost"] ?? 0),
+        quantity: String(c["quantity"] ?? 1),
+        amount: String(c["amount"] ?? 0),
+      }));
+      if (loadedComponents.length === 0) loadedComponents = [{ ...emptyComponent }];
     }
+    setComponents(loadedComponents);
     setForm({
       label: p.label,
       amount: String(p.amount),
@@ -744,7 +831,6 @@ function PackagesTab() {
       is_active: p.is_active,
       sort_order: String(p.sort_order),
       package_type: ((p as any).package_type === "bundle" ? "bundle" : "single"),
-      components_json: componentsJson,
     });
   }
 
@@ -779,11 +865,113 @@ function PackagesTab() {
             <Label>Smile Product ID</Label>
             <input className={field} value={form.smile_product_id} onChange={(e) => set("smile_product_id", e.target.value)} placeholder="e.g. 123456" />
           </label> : null}
-          {form.package_type === "bundle" ? <div className="sm:col-span-2">
-            <Label>Bundle components (JSON)</Label>
-            <textarea className={`${field} min-h-48 font-mono text-xs`} value={form.components_json} onChange={(e) => set("components_json", e.target.value)} spellCheck={false} />
-            <p className="mt-1 text-[10px] text-faint">Each component needs component_label, smile_product_id, smile_coin_cost, and quantity. Optional: amount and source_package_id. Example JSON: component_label, smile_product_id, smile_coin_cost, quantity</p>
-          </div> : <p className="sm:col-span-2 -mt-1 text-[10px] text-faint">Enter the Smile One product ID so this package is ready for checkout immediately.</p>}
+          {form.package_type === "bundle" ? (
+            <div className="sm:col-span-2 space-y-3">
+              <div>
+                <Label>Bundle products</Label>
+                <p className="mt-1 text-[10px] text-faint">
+                  Add each product separately. No JSON formatting required.
+                </p>
+              </div>
+
+              {components.map((component, index) => (
+                <div
+                  key={index}
+                  className="rounded-2xl border border-white/10 bg-white/5 p-3"
+                >
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold">Product {index + 1}</p>
+                    <button
+                      type="button"
+                      className={`${btn} border-rose/40 text-rose`}
+                      disabled={components.length === 1}
+                      onClick={() => removeComponent(index)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label>
+                      <Label>Product name / label</Label>
+                      <input
+                        className={field}
+                        value={component.component_label}
+                        onChange={(e) => updateComponent(index, "component_label", e.target.value)}
+                        placeholder="e.g. Weekly Diamonds"
+                      />
+                    </label>
+
+                    <label>
+                      <Label>Smile Product ID</Label>
+                      <input
+                        className={field}
+                        value={component.smile_product_id}
+                        onChange={(e) => updateComponent(index, "smile_product_id", e.target.value)}
+                        placeholder="e.g. 123456"
+                      />
+                    </label>
+
+                    <label>
+                      <Label>Smile Coin cost (per item)</Label>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        className={field}
+                        value={component.smile_coin_cost}
+                        onChange={(e) => updateComponent(index, "smile_coin_cost", e.target.value)}
+                      />
+                    </label>
+
+                    <label>
+                      <Label>Quantity</Label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={99}
+                        step={1}
+                        className={field}
+                        value={component.quantity}
+                        onChange={(e) => updateComponent(index, "quantity", e.target.value)}
+                      />
+                    </label>
+
+                    <label className="sm:col-span-2">
+                      <Label>Amount (optional, for this product)</Label>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        className={field}
+                        value={component.amount}
+                        onChange={(e) => updateComponent(index, "amount", e.target.value)}
+                      />
+                    </label>
+                  </div>
+                </div>
+              ))}
+
+              <button type="button" className={`${btn} w-full`} onClick={addComponent}>
+                + Add another product
+              </button>
+
+              <p className="text-[10px] text-faint">
+                Total Smile Coin cost:{" "}
+                {components.reduce(
+                  (sum, component) =>
+                    sum +
+                    (Number(component.smile_coin_cost) || 0) *
+                      (Number(component.quantity) || 0),
+                  0,
+                )}
+              </p>
+            </div>
+          ) : (
+            <p className="sm:col-span-2 -mt-1 text-[10px] text-faint">
+              Enter the Smile One product ID so this package is ready for checkout immediately.
+            </p>
+          )}
 
           <div className="sm:col-span-2">
             <Label>Package image</Label>
@@ -849,7 +1037,13 @@ function PackagesTab() {
           const previewPack = {
             price: Number(form.price) || 0,
             smile_coin_cost: form.package_type === "bundle"
-              ? (() => { try { const list = JSON.parse(form.components_json || "[]"); return Array.isArray(list) ? list.reduce((sum: number, c: any) => sum + (Number(c["smile_coin_cost"]) || 0) * (Number(c["quantity"]) || 1), 0) : 0; } catch { return 0; } })()
+              ? components.reduce(
+                  (sum, component) =>
+                    sum +
+                    (Number(component.smile_coin_cost) || 0) *
+                      (Number(component.quantity) || 0),
+                  0,
+                )
               : Number(form.smile_coin_cost) || 0,
           };
           const preview = computePricing(previewPack, rate);
@@ -1134,8 +1328,6 @@ function BannersTab() {
 
 function OrdersTab() {
   type PaymentAwareOrder = Order & {
-    user_id?: string | null;
-    customer_phone?: string | null;
     payment_status?: string | null;
     payment_remark?: string | null;
     paid_at?: string | null;
@@ -1151,7 +1343,6 @@ function OrdersTab() {
   };
 
   const qc = useQueryClient();
-  const listOrderCustomerPhonesFn = useServerFn(listOrderCustomerPhones);
   const [selectedOrder, setSelectedOrder] =
     useState<PaymentAwareOrder | null>(null);
 
@@ -1173,25 +1364,7 @@ function OrdersTab() {
 
       if (error) throw error;
 
-      const rows = (data ?? []) as unknown as PaymentAwareOrder[];
-      const userIds = [
-        ...new Set(
-          rows
-            .map((order) => order.user_id)
-            .filter((id): id is string => typeof id === "string" && id.length > 0),
-        ),
-      ];
-      const phonesByUserId = await listOrderCustomerPhonesFn({
-        data: { userIds },
-      });
-
-      return rows.map((order) => ({
-        ...order,
-        customer_phone:
-          typeof order.user_id === "string"
-            ? phonesByUserId[order.user_id] || null
-            : null,
-      }));
+      return (data ?? []) as unknown as PaymentAwareOrder[];
     },
     refetchInterval: 4000,
     refetchOnWindowFocus: true,
@@ -1542,21 +1715,6 @@ function OrdersTab() {
                           ? ` · ${o.player_server}`
                           : ""}
                       </p>
-                      <p className="mt-2 text-[11px] text-faint">
-                        Registered mobile
-                      </p>
-                      {o.customer_phone ? (
-                        <a
-                          href={`tel:${o.customer_phone}`}
-                          className="mt-0.5 inline-flex break-all text-sm font-medium text-cyan-300 hover:underline"
-                        >
-                          {o.customer_phone}
-                        </a>
-                      ) : (
-                        <p className="mt-0.5 text-sm text-subtle">
-                          Not available
-                        </p>
-                      )}
                     </div>
 
                     <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
@@ -1864,69 +2022,75 @@ function DiscountTab() {
   const { data: settings } = useQuery(settingsQuery());
   const [value, setValue] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [couponCode, setCouponCode] = useState("");
+  const [couponPercent, setCouponPercent] = useState("2");
+  const [maxUses, setMaxUses] = useState("100");
+  const [couponBusy, setCouponBusy] = useState(false);
+  const [coupons, setCoupons] = useState<Array<{id:string; code:string; discount_percent:number; max_uses:number|null; uses_count:number; is_active:boolean; created_at:string}>>([]);
 
-  useEffect(() => {
-    if (settings) setValue(String(settings.discount_percent));
-  }, [settings]);
-
+  useEffect(() => { if (settings) setValue(String(settings.discount_percent)); }, [settings]);
+  async function loadCoupons() {
+    const { data, error } = await (supabase as any).from("coupons").select("id, code, discount_percent, max_uses, uses_count, is_active, created_at").order("created_at", { ascending: false });
+    if (error) { toast.error(`Could not load coupons: ${error.message}`); return; }
+    setCoupons((data ?? []) as typeof coupons);
+  }
+  useEffect(() => { void loadCoupons(); }, []);
   const percent = Math.min(Math.max(Number(value) || 0, 0), 100);
-
   async function save() {
-    if (Number(value) < 0 || Number(value) > 100 || Number.isNaN(Number(value))) {
-      toast.error("Enter a number between 0 and 100");
-      return;
-    }
+    if (Number(value) < 0 || Number(value) > 100 || Number.isNaN(Number(value))) { toast.error("Enter a number between 0 and 100"); return; }
     setSaving(true);
-    const { error } = await supabase
-      .from("site_settings")
-      .upsert({ id: true, discount_percent: percent }, { onConflict: "id" });
+    const { error } = await supabase.from("site_settings").upsert({ id: true, discount_percent: percent }, { onConflict: "id" });
     setSaving(false);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
+    if (error) { toast.error(error.message); return; }
     toast.success(percent ? `${percent}% off applied site-wide` : "Discount turned off");
     qc.invalidateQueries({ queryKey: ["site-settings"] });
   }
-
+  async function createCoupon() {
+    const code = couponCode.trim().toUpperCase().replace(/\s+/g, "");
+    const discount = Number(couponPercent);
+    const limit = Number(maxUses);
+    if (!/^[A-Z0-9_-]{3,32}$/.test(code)) { toast.error("Use 3–32 letters, numbers, _ or - for the code"); return; }
+    if (!Number.isFinite(discount) || discount <= 0 || discount > 100) { toast.error("Coupon discount must be between 0.01 and 100%"); return; }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000000) { toast.error("Maximum uses must be a whole number from 1 to 1,000,000"); return; }
+    setCouponBusy(true);
+    const { error } = await (supabase as any).from("coupons").insert({ code, discount_percent: discount, max_uses: limit, is_active: true });
+    setCouponBusy(false);
+    if (error) { toast.error(error.code === "23505" ? "That coupon code already exists" : error.message); return; }
+    setCouponCode(""); toast.success(`Coupon ${code} created`); await loadCoupons();
+  }
+  async function toggleCoupon(c: typeof coupons[number]) {
+    const { error } = await (supabase as any).from("coupons").update({ is_active: !c.is_active }).eq("id", c.id);
+    if (error) { toast.error(error.message); return; }
+    toast.success(c.is_active ? `${c.code} deactivated` : `${c.code} activated`); await loadCoupons();
+  }
   return (
-    <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
-      <div className="glass-panel rounded-2xl p-4">
-        <p className="font-display text-sm font-semibold">Global discount</p>
-        <p className="mt-1 text-[11px] text-faint">
-          Applies to every recharge pack across the whole site. Set 0 to turn it off.
-        </p>
-        <label className="mt-3 block">
-          <Label>Discount %</Label>
-          <input
-            type="number"
-            min={0}
-            max={100}
-            className={field}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-          />
-        </label>
-        <button className={`${primary} mt-4`} disabled={saving} onClick={save}>
-          {saving ? "Saving…" : "Save discount"}
-        </button>
-      </div>
-
-      <div className="glass-panel rounded-2xl p-4">
-        <p className="font-display text-sm font-semibold">Preview</p>
-        <div className="mt-3 space-y-2 text-sm">
-          {[199, 499, 999].map((p) => (
-            <div key={p} className="flex items-center justify-between">
-              <span className="text-faint line-through">{money(p)}</span>
-              <span className="font-display font-semibold">
-                {money(Math.round(p * (1 - percent / 100)))}
-              </span>
-            </div>
-          ))}
+    <div className="space-y-5">
+      <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+        <div className="glass-panel rounded-2xl p-4">
+          <p className="font-display text-sm font-semibold">Global discount</p>
+          <p className="mt-1 text-[11px] text-faint">Applies to every recharge pack across the whole site. Set 0 to turn it off.</p>
+          <label className="mt-3 block"><Label>Discount %</Label><input type="number" min={0} max={100} className={field} value={value} onChange={(e) => setValue(e.target.value)} /></label>
+          <button className={`${primary} mt-4`} disabled={saving} onClick={save}>{saving ? "Saving…" : "Save discount"}</button>
         </div>
-        <p className="mt-3 text-[11px] text-faint">
-          Currently live: {settings?.discount_percent ?? 0}% off
-        </p>
+        <div className="glass-panel rounded-2xl p-4">
+          <p className="font-display text-sm font-semibold">Preview</p>
+          <div className="mt-3 space-y-2 text-sm">{[199, 499, 999].map((p) => <div key={p} className="flex items-center justify-between"><span className="text-faint line-through">{money(p)}</span><span className="font-display font-semibold">{money(Math.round(p * (1 - percent / 100)))}</span></div>)}</div>
+          <p className="mt-3 text-[11px] text-faint">Currently live: {settings?.discount_percent ?? 0}% off</p>
+        </div>
+      </div>
+      <div className="glass-panel rounded-2xl p-4">
+        <p className="font-display text-sm font-semibold">Create Coupon</p>
+        <p className="mt-1 text-[11px] text-faint">Coupon discount is capped by the live Smile Coin rate profit %. The requested coupon % is limited to that rate margin, then limited again to the remaining package profit after the global discount. The final price never goes below real cost.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <label><Label>Coupon code</Label><input className={field} placeholder="PUJA2" maxLength={32} value={couponCode} onChange={(e) => setCouponCode(e.target.value.toUpperCase().replace(/\s+/g, ""))}/></label>
+          <label><Label>Discount (%)</Label><input className={field} type="number" min="0.01" max="100" step="0.01" value={couponPercent} onChange={(e) => setCouponPercent(e.target.value)}/></label>
+          <label><Label>Maximum uses</Label><input className={field} type="number" min="1" step="1" value={maxUses} onChange={(e) => setMaxUses(e.target.value)}/></label>
+        </div>
+        <button className={`${primary} mt-4`} disabled={couponBusy} onClick={createCoupon}>{couponBusy ? "Creating…" : "Create Coupon"}</button>
+      </div>
+      <div className="glass-panel rounded-2xl p-4">
+        <div className="flex items-center justify-between gap-3"><p className="font-display text-sm font-semibold">Coupons</p><button className={btn} onClick={() => void loadCoupons()}>Refresh</button></div>
+        {coupons.length === 0 ? <p className="mt-4 text-xs text-faint">No coupons created yet.</p> : <div className="mt-3 space-y-2">{coupons.map((c) => <div key={c.id} className="flex flex-col gap-3 rounded-xl border border-white/10 p-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><span className="font-display text-sm font-semibold">{c.code}</span><span className={`rounded-full px-2 py-0.5 text-[10px] ${c.is_active && (c.max_uses == null || c.uses_count < c.max_uses) ? "bg-lime/10 text-lime" : "bg-red-500/10 text-red-300"}`}>{!c.is_active ? "Deactivated" : c.max_uses != null && c.uses_count >= c.max_uses ? "Limit reached" : "Active"}</span></div><p className="mt-1 text-xs text-faint">{c.discount_percent}% off profit · Used {c.uses_count}/{c.max_uses ?? "∞"}</p></div><button className={btn} onClick={() => void toggleCoupon(c)}>{c.is_active ? "Deactivate" : "Activate"}</button></div>)}</div>}
       </div>
     </div>
   );
