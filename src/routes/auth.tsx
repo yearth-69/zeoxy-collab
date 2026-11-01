@@ -56,7 +56,7 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
-type Step = "signup" | "signin" | "otp" | "addEmail";
+type Step = "signup" | "signin" | "otp" | "addEmail" | "forgotPassword";
 type Field = "username" | "email" | "phone" | "password" | "otp" | "identifier" | "name";
 type Errors = Partial<Record<Field, string>>;
 type Pending = { registrationId: string; maskedPhone: string };
@@ -138,6 +138,8 @@ function AuthPage() {
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [newEmail, setNewEmail] = useState("");
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [resetEmailSent, setResetEmailSent] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
   const [errors, setErrors] = useState<Errors>({});
   const [usernameState, setUsernameState] = useState<UsernameState>(IDLE_USERNAME);
@@ -386,6 +388,37 @@ function AuthPage() {
       goNext();
     });
 
+  const sendPasswordReset = () =>
+    run(async () => {
+      const parsed = emailSchema.safeParse(recoveryEmail.trim());
+      if (!parsed.success) {
+        showErrors({ email: "Enter a valid email address" });
+        return;
+      }
+
+      setErrors({});
+      const redirectTo = `${window.location.origin}/reset-password?flow=recovery`;
+      const { error } = await supabase.auth.resetPasswordForEmail(parsed.data, {
+        redirectTo,
+      });
+
+      if (error) {
+        console.error("[auth] Password reset email failed:", error);
+        toast.error(
+          error.status === 429
+            ? "Too many reset requests. Please wait a few minutes."
+            : "Could not send the reset email. Please try again.",
+        );
+        return;
+      }
+
+      // Do not reveal whether the submitted email has an account.
+      setResetEmailSent(true);
+      toast.success(
+        "If an account exists for this email, a password reset link has been sent.",
+      );
+    });
+
   const saveEmail = () =>
     run(async () => {
       const parsed = emailSchema.safeParse(newEmail);
@@ -411,7 +444,8 @@ function AuthPage() {
     if (step === "signup") void sendCode();
     else if (step === "signin") void signIn();
     else if (step === "otp") void verify();
-    else void saveEmail();
+    else if (step === "addEmail") void saveEmail();
+    else void sendPasswordReset();
   }
 
   const field =
@@ -443,6 +477,10 @@ function AuthPage() {
       "Add your email",
       "Your account was created before email sign-in. Add your email to log in with it too.",
     ],
+    forgotPassword: [
+      "Forgot password?",
+      "Enter your registered email and we'll send you a secure reset link.",
+    ],
   };
 
   const submitLabel: Record<Step, [string, string]> = {
@@ -450,6 +488,7 @@ function AuthPage() {
     signin: ["Log in", "Logging in…"],
     otp: ["Verify & create account", "Verifying…"],
     addEmail: ["Save email", "Saving…"],
+    forgotPassword: ["Send reset link", "Sending reset link…"],
   };
 
   return (
@@ -474,7 +513,16 @@ function AuthPage() {
             <h1 className="font-display text-xl font-semibold">{heading[step][0]}</h1>
             <p className="mt-1 text-xs text-faint">{heading[step][1]}</p>
           </div>
-          {step === "signup" || step === "signin" ? (
+          {step === "forgotPassword" ? (
+            <button
+              type="button"
+              onClick={() => goToStep("signin")}
+              disabled={busy}
+              className="glass-panel shrink-0 rounded-full px-3 py-1.5 text-[11px] font-medium"
+            >
+              Back to login
+            </button>
+          ) : step === "signup" || step === "signin" ? (
             <button
               type="button"
               onClick={() => goToStep(step === "signup" ? "signin" : "signup")}
@@ -678,6 +726,56 @@ function AuthPage() {
                 />
                 <FieldError message={errors.password} />
               </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setRecoveryEmail(identifierType === "email" ? identifier.trim() : "");
+                  setResetEmailSent(false);
+                  goToStep("forgotPassword");
+                }}
+                disabled={busy}
+                className="ml-auto block text-[11px] font-medium text-cyan hover:underline disabled:opacity-50"
+              >
+                Forgot password?
+              </button>
+            </div>
+          ) : null}
+
+          {step === "forgotPassword" ? (
+            <div className="mt-5 space-y-2.5">
+              <div className="space-y-1">
+                <input
+                  type="email"
+                  inputMode="email"
+                  value={recoveryEmail}
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  required
+                  aria-required="true"
+                  onChange={(e) => {
+                    setRecoveryEmail(e.target.value);
+                    setResetEmailSent(false);
+                    clearError("email");
+                  }}
+                  placeholder="Registered email address"
+                  aria-label="Registered email address"
+                  className={inputClass("email")}
+                />
+                <FieldError message={errors.email} />
+              </div>
+
+              {resetEmailSent ? (
+                <p className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2.5 text-[11px] leading-relaxed text-emerald-200">
+                  Check your inbox and spam folder for the password reset link.
+                  You can request another link if needed.
+                </p>
+              ) : (
+                <p className={hint}>
+                  Use the email address linked to your Zeoxy account.
+                </p>
+              )}
             </div>
           ) : null}
 
@@ -750,7 +848,7 @@ function AuthPage() {
             disabled={busy}
             className="brand-gradient mt-3 w-full rounded-2xl py-3.5 font-display text-sm font-semibold text-ink disabled:opacity-50"
           >
-            {busy ? submitLabel[step][1] : submitLabel[step][0]}
+            {busy ? submitLabel[step][1] : step === "forgotPassword" && resetEmailSent ? "Resend reset link" : submitLabel[step][0]}
           </button>
 
           {step === "addEmail" ? (
