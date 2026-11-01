@@ -86,6 +86,7 @@ const TABS = [
   "Smile Products",
   "Smile Coin",
   "Discount",
+  "Website Settings",
   "Admins",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -149,6 +150,7 @@ function AdminPage() {
         {tab === "Smile Products" && <SmileProductsTab />}
         {tab === "Smile Coin" && <SmileCoinTab />}
         {tab === "Discount" && <DiscountTab />}
+        {tab === "Website Settings" && <WebsiteSettingsTab />}
         {tab === "Admins" && <AdminsTab />}
       </div>
     </div>
@@ -2904,6 +2906,117 @@ function DashboardTab() {
           ) : null}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ---------------- Website Settings ---------------- */
+
+function WebsiteSettingsTab() {
+  const qc = useQueryClient();
+  const [file, setFile] = useState<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  const { data: currentLogo, isLoading, error } = useQuery({
+    queryKey: ["site-logo-url"],
+    queryFn: async (): Promise<string | null> => {
+      const { data, error } = await (supabase as any)
+        .from("site_settings")
+        .select("logo_url")
+        .eq("id", true)
+        .maybeSingle();
+      if (error) throw error;
+      return typeof data?.logo_url === "string" && data.logo_url.trim()
+        ? data.logo_url.trim()
+        : null;
+    },
+    staleTime: 60_000,
+  });
+
+  useEffect(() => {
+    if (!file) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  async function saveLogo() {
+    if (!file) {
+      toast.error("Choose a logo image first.");
+      return;
+    }
+    setSaving(true);
+    try {
+      // Reuse the already-configured store-images bucket and its banners upload policy.
+      const publicUrl = await uploadStoreImage(file, "banners");
+      const { error: saveError } = await (supabase as any)
+        .from("site_settings")
+        .upsert({ id: true, logo_url: publicUrl }, { onConflict: "id" });
+      if (saveError) throw saveError;
+
+      qc.setQueryData(["site-logo-url"], publicUrl);
+      await qc.invalidateQueries({ queryKey: ["site-logo-url"] });
+      setFile(null);
+      toast.success("Website logo updated everywhere.");
+    } catch (error) {
+      console.error("[website-settings] Logo update failed:", error);
+      toast.error(error instanceof Error ? error.message : "Could not update the website logo.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      <section className="glass-panel rounded-2xl p-4 sm:p-5">
+        <div>
+          <h2 className="font-display text-sm font-semibold">Website Logo</h2>
+          <p className="mt-1 text-xs leading-relaxed text-faint">
+            Upload one logo to use across the navbar, mobile menu, login pages and browser tab icon.
+          </p>
+        </div>
+
+        <div className="mt-4 flex min-h-36 items-center justify-center rounded-2xl border border-dashed border-white/15 bg-white/[.03] p-5">
+          {previewUrl ? (
+            <img src={previewUrl} alt="New website logo preview" className="max-h-28 max-w-full object-contain" />
+          ) : isLoading ? (
+            <p className="text-xs text-faint">Loading current logo…</p>
+          ) : currentLogo ? (
+            <img src={currentLogo} alt="Current website logo" className="max-h-28 max-w-full object-contain" />
+          ) : (
+            <img src="/logo.jpeg" alt="Default website logo" className="max-h-28 max-w-full object-contain" />
+          )}
+        </div>
+        {error ? (
+          <p className="mt-2 text-xs text-rose">Could not load the saved logo. The default logo is shown.</p>
+        ) : null}
+
+        <label className="mt-4 block">
+          <Label>Choose new logo</Label>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+            className={`${field} file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-3 file:py-1.5 file:text-xs`}
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          />
+        </label>
+        <p className="mt-2 text-[10px] text-faint">JPG, PNG, WebP, GIF or AVIF · Maximum 5 MB.</p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <button type="button" className={primary} disabled={!file || saving} onClick={() => void saveLogo()}>
+            {saving ? "Uploading…" : "Save website logo"}
+          </button>
+          {file ? (
+            <button type="button" className={btn} disabled={saving} onClick={() => setFile(null)}>
+              Cancel
+            </button>
+          ) : null}
+        </div>
+      </section>
     </div>
   );
 }

@@ -1,9 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { Aurora } from "@/components/Aurora";
-import { supabase } from "@/integrations/supabase/client";
 import { PASSWORD_GUIDELINE, passwordProblem } from "@/lib/auth-rules";
+import { finishPhonePasswordRecovery } from "@/lib/auth.recovery.functions";
+import { SiteLogo } from "@/components/SiteLogoProvider";
 
 export const Route = createFileRoute("/reset-password")({
   head: () => ({
@@ -20,69 +22,43 @@ export const Route = createFileRoute("/reset-password")({
 
 function ResetPasswordPage() {
   const navigate = useNavigate();
+  const finishRecovery = useServerFn(finishPhonePasswordRecovery);
   const [checking, setChecking] = useState(true);
-  const [recoveryReady, setRecoveryReady] = useState(false);
+  const [recovery, setRecovery] = useState<{ recoveryId: string; resetToken: string } | null>(null);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    let active = true;
-    const params = new URLSearchParams(window.location.search);
-    const recoveryMarker =
-      params.get("flow") === "recovery" ||
-      window.location.hash.includes("type=recovery");
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!active) return;
-
-      if (
-        session &&
-        (event === "PASSWORD_RECOVERY" ||
-          (event === "SIGNED_IN" && recoveryMarker))
-      ) {
-        setRecoveryReady(true);
-        setChecking(false);
+    try {
+      const raw = window.sessionStorage.getItem("zeoxy_phone_password_recovery");
+      if (raw) {
+        const parsed = JSON.parse(raw) as { recoveryId?: unknown; resetToken?: unknown };
+        if (typeof parsed.recoveryId === "string" && typeof parsed.resetToken === "string") {
+          setRecovery({ recoveryId: parsed.recoveryId, resetToken: parsed.resetToken });
+        }
       }
-    });
-
-    // Fallback for a recovery session established before the listener attached.
-    void supabase.auth.getSession().then(({ data, error }) => {
-      if (!active) return;
-
-      if (error) {
-        console.error("[reset-password] Session check failed:", error);
-      }
-
-      if (data.session && recoveryMarker) {
-        setRecoveryReady(true);
-      }
+    } catch (error) {
+      console.error("[reset-password] Could not read recovery session:", error);
+    } finally {
       setChecking(false);
-    });
-
-    return () => {
-      active = false;
-      subscription.unsubscribe();
-    };
+    }
   }, []);
 
   async function submitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
 
-    if (!recoveryReady) {
-      toast.error("Open the password reset link from your email first.");
+    if (!recovery) {
+      toast.error("Verify your mobile number first to reset your password.");
       return;
     }
 
-    const problem = passwordProblem(password, {});
+    const problem = passwordProblem(password);
     if (problem) {
       toast.error(problem);
       return;
     }
-
     if (password !== confirmPassword) {
       toast.error("The passwords do not match.");
       return;
@@ -90,21 +66,29 @@ function ResetPasswordPage() {
 
     setBusy(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password });
+      const result = await finishRecovery({
+        data: {
+          recoveryId: recovery.recoveryId,
+          resetToken: recovery.resetToken,
+          password,
+        },
+      });
 
-      if (error) {
-        toast.error(error.message);
+      if (!result.ok) {
+        toast.error(result.message);
+        if (
+          result.code === "RECOVERY_TOKEN_INVALID" ||
+          result.code === "RECOVERY_TOKEN_USED" ||
+          result.code === "PASSWORD_UPDATE_FAILED"
+        ) {
+          window.sessionStorage.removeItem("zeoxy_phone_password_recovery");
+          setRecovery(null);
+        }
         return;
       }
 
-      toast.success("Password updated. Please log in with your new password.");
-
-      // End the recovery session so the user returns to the normal login flow.
-      const { error: signOutError } = await supabase.auth.signOut();
-      if (signOutError) {
-        console.warn("[reset-password] Could not end recovery session:", signOutError);
-      }
-
+      window.sessionStorage.removeItem("zeoxy_phone_password_recovery");
+      toast.success("Password updated successfully. Log in with your new password.");
       navigate({ to: "/auth", replace: true });
     } catch (error) {
       console.error("[reset-password] Password update failed:", error);
@@ -123,56 +107,45 @@ function ResetPasswordPage() {
       <div className="glass-panel relative z-10 w-full max-w-sm rounded-3xl p-6">
         <Link to="/" className="flex items-center gap-2">
           <div className="size-9 shrink-0 overflow-hidden rounded-xl">
-            <img
-              src="/logo.jpeg"
-              alt="ZEXY STORE"
-              className="h-full w-full object-contain"
-            />
+            <SiteLogo alt="ZEXY STORE" className="h-full w-full object-contain" />
           </div>
-          <p className="font-display text-base font-semibold leading-none">
-            ZEXY STORE
-          </p>
+          <p className="font-display text-base font-semibold leading-none">ZEXY STORE</p>
         </Link>
 
         <div className="mt-6">
-          <h1 className="font-display text-xl font-semibold">
-            Reset your password
-          </h1>
+          <h1 className="font-display text-xl font-semibold">Create a new password</h1>
           <p className="mt-1 text-xs text-faint">
-            Choose a new password for your account.
+            Your mobile number has been verified. Choose a new password for your account.
           </p>
         </div>
 
         {checking ? (
-          <p className="mt-6 text-sm text-subtle">Checking your reset link…</p>
-        ) : recoveryReady ? (
+          <p className="mt-6 text-sm text-subtle">Preparing secure reset session…</p>
+        ) : recovery ? (
           <form onSubmit={submitPassword} className="mt-5 space-y-3">
             <input
               type="password"
               value={password}
               autoComplete="new-password"
               required
+              maxLength={72}
               onChange={(event) => setPassword(event.target.value)}
               placeholder="New password"
               aria-label="New password"
               className={field}
             />
-
             <input
               type="password"
               value={confirmPassword}
               autoComplete="new-password"
               required
+              maxLength={72}
               onChange={(event) => setConfirmPassword(event.target.value)}
               placeholder="Confirm new password"
               aria-label="Confirm new password"
               className={field}
             />
-
-            <p className="px-1 text-[10px] leading-relaxed text-faint">
-              {PASSWORD_GUIDELINE}
-            </p>
-
+            <p className="px-1 text-[10px] leading-relaxed text-faint">{PASSWORD_GUIDELINE}</p>
             <button
               type="submit"
               disabled={busy || !password || !confirmPassword}
@@ -184,8 +157,7 @@ function ResetPasswordPage() {
         ) : (
           <div className="mt-5 space-y-3">
             <p className="rounded-xl border border-rose-400/20 bg-rose-400/10 px-3 py-2.5 text-xs leading-relaxed text-rose-200">
-              This password reset link is invalid or has expired. Request a new
-              one from the login page.
+              Your recovery session is missing or expired. Request a new OTP from the login page.
             </p>
             <Link
               to="/auth"

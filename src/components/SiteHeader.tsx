@@ -15,7 +15,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { HamburgerButton } from "@/components/MobileMenu";
 import { NotificationBell } from "@/components/NotificationBell";
-import { WelcomeModal } from "@/components/WelcomeModal";
+import { SiteLogo } from "@/components/SiteLogoProvider";
 
 export function SiteHeader({ onMenuClick }: { onMenuClick: () => void }) {
   const { theme, toggle } = useTheme();
@@ -39,7 +39,6 @@ export function SiteHeader({ onMenuClick }: { onMenuClick: () => void }) {
   }
 
   return (
-    <>
       <header className="relative z-30 flex items-center justify-between gap-3 px-4 pt-5 sm:px-6">
         <div className="flex min-w-0 items-center gap-2">
           {/* Original site logo and mobile menu */}
@@ -47,13 +46,7 @@ export function SiteHeader({ onMenuClick }: { onMenuClick: () => void }) {
 
           <Link to="/" className="flex min-w-0 items-center gap-2" aria-label="ZEXY STORE home">
             <div className="size-9 shrink-0 overflow-hidden rounded-xl">
-              <img
-                src="/logo.jpeg"
-                alt="ZEXY STORE"
-                width={36}
-                height={36}
-                className="h-full w-full object-contain"
-              />
+              <SiteLogo alt="ZEXY STORE" width={36} height={36} className="h-full w-full object-contain" />
             </div>
 
             <div className="min-w-0">
@@ -165,10 +158,6 @@ export function SiteHeader({ onMenuClick }: { onMenuClick: () => void }) {
           </button>
         </nav>
       </header>
-
-      {/* Welcome popup remains a separate component */}
-      <WelcomeModal />
-    </>
   );
 }
 

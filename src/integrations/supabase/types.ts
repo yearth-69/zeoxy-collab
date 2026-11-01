@@ -399,23 +399,74 @@ export type Database = {
         }
         Relationships: []
       }
+      password_recovery_otps: {
+        Row: {
+          attempts: number
+          code_hash: string
+          consumed_at: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          last_sent_at: string
+          phone: string
+          reset_token_expires_at: string | null
+          reset_token_hash: string | null
+          send_count: number
+          user_id: string
+          verified_at: string | null
+        }
+        Insert: {
+          attempts?: number
+          code_hash: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at: string
+          id?: string
+          last_sent_at?: string
+          phone: string
+          reset_token_expires_at?: string | null
+          reset_token_hash?: string | null
+          send_count?: number
+          user_id: string
+          verified_at?: string | null
+        }
+        Update: {
+          attempts?: number
+          code_hash?: string
+          consumed_at?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          last_sent_at?: string
+          phone?: string
+          reset_token_expires_at?: string | null
+          reset_token_hash?: string | null
+          send_count?: number
+          user_id?: string
+          verified_at?: string | null
+        }
+        Relationships: []
+      }
       site_settings: {
         Row: {
           created_at: string
           discount_percent: number
           id: boolean
+          logo_url: string | null
           updated_at: string
         }
         Insert: {
           created_at?: string
           discount_percent?: number
           id?: boolean
+          logo_url?: string | null
           updated_at?: string
         }
         Update: {
           created_at?: string
           discount_percent?: number
           id?: boolean
+          logo_url?: string | null
           updated_at?: string
         }
         Relationships: []

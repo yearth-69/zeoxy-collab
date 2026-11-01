@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { SiteLogo } from "@/components/SiteLogoProvider";
 
 const LINKS = [
   { to: "/", label: "Home" },
@@ -105,8 +106,7 @@ export function MobileDrawer({ open, onClose, actions }: DrawerProps) {
         {/* Header: logo + close */}
         <div className="flex items-center justify-between border-b border-black/10 px-4 py-4 dark:border-white/10">
           <Link to="/" onClick={onClose} className="flex items-center gap-2">
-            <img
-              src="/logo.jpeg"
+            <SiteLogo
               alt="ZEXY STORE"
               className="h-9 w-9 shrink-0 rounded-xl object-contain"
             />

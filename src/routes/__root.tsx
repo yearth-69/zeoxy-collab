@@ -14,6 +14,7 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { ThemeProvider } from "../lib/theme";
 import { Toaster } from "@/components/ui/sonner";
 import { WelcomeModal } from "@/components/WelcomeModal";
+import { SiteLogoProvider } from "@/components/SiteLogoProvider";
 
 function NotFoundComponent() {
   return (
@@ -132,10 +133,13 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-        <Outlet />
-        <WelcomeModal />
-        <Toaster />
+        <SiteLogoProvider>
+          {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
+          <Outlet />
+          {/* The welcome popup has exactly one global mount point. */}
+          <WelcomeModal />
+          <Toaster />
+        </SiteLogoProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );
