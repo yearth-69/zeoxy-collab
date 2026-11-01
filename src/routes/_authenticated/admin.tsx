@@ -48,6 +48,7 @@ import {
   listClients,
   removeAdmin,
   reorderGames,
+  listOrderCustomerPhones,
 } from "@/lib/admin.functions";
 import {
   assignSmileProduct,
@@ -55,6 +56,7 @@ import {
   type SmileProduct,
 } from "@/lib/smile.functions";
 import { ContactMessagesTab } from "@/components/ContactMessagesTab";
+import { NotificationAdminTab } from "@/components/NotificationAdminTab";
 
 const uploadGameImage = uploadStoreImage;
 
@@ -80,6 +82,7 @@ const TABS = [
   "Orders",
   "Clients",
   "Messages",
+  "Notifications",
   "Smile Products",
   "Smile Coin",
   "Discount",
@@ -142,6 +145,7 @@ function AdminPage() {
         {tab === "Orders" && <OrdersTab />}
         {tab === "Clients" && <ClientsTab />}
         {tab === "Messages" && <ContactMessagesTab />}
+        {tab === "Notifications" && <NotificationAdminTab />}
         {tab === "Smile Products" && <SmileProductsTab />}
         {tab === "Smile Coin" && <SmileCoinTab />}
         {tab === "Discount" && <DiscountTab />}
@@ -1340,6 +1344,7 @@ function OrdersTab() {
   };
 
   const qc = useQueryClient();
+  const getOrderCustomerPhones = useServerFn(listOrderCustomerPhones);
   const [selectedOrder, setSelectedOrder] =
     useState<PaymentAwareOrder | null>(null);
 
@@ -1369,6 +1374,22 @@ function OrdersTab() {
 
   const { data: orders = [], isLoading, error: ordersError } =
     ordersQueryAdmin;
+
+  const orderUserIds = Array.from(
+    new Set(
+      orders
+        .map((order) => order.user_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  );
+
+  const { data: customerPhones = {} } = useQuery({
+    queryKey: ["order-customer-phones", orderUserIds],
+    queryFn: () =>
+      getOrderCustomerPhones({ data: { userIds: orderUserIds } }),
+    enabled: orderUserIds.length > 0,
+    staleTime: 60_000,
+  });
 
   const { data: games = [] } = useQuery(
     gamesQuery({ includeInactive: true }),
@@ -1711,6 +1732,11 @@ function OrdersTab() {
                         {o.player_server
                           ? ` · ${o.player_server}`
                           : ""}
+                      </p>
+                      <p className="mt-1 break-all text-xs text-faint">
+                        Mobile: {o.user_id
+                          ? customerPhones[o.user_id] || "Not available"
+                          : "Not available"}
                       </p>
                     </div>
 
