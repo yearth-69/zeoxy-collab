@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Aurora } from "@/components/Aurora";
+import { SiteLogo } from "@/components/SiteLogoProvider";
 import { supabase } from "@/integrations/supabase/client";
 import {
   DEFAULT_COUNTRY,
@@ -502,8 +503,7 @@ function AuthPage() {
       <div className="glass-panel relative z-10 w-full max-w-sm rounded-3xl p-6">
         <Link to="/" className="flex items-center gap-2">
           <div className="size-9 shrink-0 overflow-hidden rounded-xl">
-            <img
-              src="/logo.jpeg"
+            <SiteLogo
               alt="ZEXY STORE"
               className="h-full w-full object-contain"
             />

@@ -1,89 +1,86 @@
-import { createContext, useContext, useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ImgHTMLAttributes } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
+export const SITE_LOGO_QUERY_KEY = ["site-logo-url"] as const;
 const DEFAULT_LOGO = "/logo.jpeg";
-const SITE_LOGO_QUERY_KEY = ["site-logo-url"] as const;
-const SiteLogoContext = createContext<string>(DEFAULT_LOGO);
 
-type SiteLogoProviderProps = { children: ReactNode };
+async function fetchSiteLogoUrl(): Promise<string | null> {
+  const { data, error } = await (supabase as any)
+    .from("site_settings")
+    .select("logo_url")
+    .eq("id", true)
+    .maybeSingle();
 
-export function SiteLogoProvider({ children }: SiteLogoProviderProps) {
-  const { data } = useQuery({
+  if (error) {
+    console.error("[site-logo] Could not load website logo:", error);
+    throw error;
+  }
+
+  return typeof data?.logo_url === "string" && data.logo_url.trim()
+    ? data.logo_url.trim()
+    : null;
+}
+
+function useSiteLogoUrl() {
+  return useQuery({
     queryKey: SITE_LOGO_QUERY_KEY,
-    queryFn: async (): Promise<string | null> => {
-      const { data: row, error } = await (supabase as any)
-        .from("site_settings")
-        .select("logo_url")
-        .eq("id", true)
-        .maybeSingle();
-      if (error) throw error;
-      return typeof row?.logo_url === "string" && row.logo_url.trim()
-        ? row.logo_url.trim()
-        : null;
-    },
+    queryFn: fetchSiteLogoUrl,
     staleTime: 60_000,
     refetchOnWindowFocus: true,
-    retry: 1,
   });
-
-  const logoUrl = data || DEFAULT_LOGO;
-
-  useEffect(() => {
-    const links = Array.from(
-      document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]'),
-    );
-    for (const link of links) {
-      link.href = logoUrl;
-      const lower = logoUrl.toLowerCase();
-      link.type = lower.endsWith(".svg")
-        ? "image/svg+xml"
-        : lower.endsWith(".webp")
-          ? "image/webp"
-          : lower.endsWith(".png")
-            ? "image/png"
-            : lower.endsWith(".gif")
-              ? "image/gif"
-              : lower.endsWith(".avif")
-                ? "image/avif"
-                : "image/jpeg";
-    }
-  }, [logoUrl]);
-
-  return (
-    <SiteLogoContext.Provider value={logoUrl}>
-      {children}
-    </SiteLogoContext.Provider>
-  );
 }
 
-export function useSiteLogo() {
-  return useContext(SiteLogoContext);
-}
+type SiteLogoProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src">;
 
-export function SiteLogo({
-  alt = "ZEXY STORE",
-  className = "h-9 w-9 object-contain",
-  width,
-  height,
-}: {
-  alt?: string;
-  className?: string;
-  width?: number;
-  height?: number;
-}) {
-  const src = useSiteLogo();
+export function SiteLogo({ alt = "ZEXY STORE", onError, ...props }: SiteLogoProps) {
+  const { data } = useSiteLogoUrl();
+  const source = data || DEFAULT_LOGO;
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const displayedSource = failedSource === source ? DEFAULT_LOGO : source;
+
   return (
     <img
-      src={src}
+      {...props}
+      src={displayedSource}
       alt={alt}
-      width={width}
-      height={height}
-      className={className}
       onError={(event) => {
-        if (event.currentTarget.src.endsWith(DEFAULT_LOGO)) return;
-        event.currentTarget.src = DEFAULT_LOGO;
+        if (displayedSource !== DEFAULT_LOGO) setFailedSource(source);
+        onError?.(event);
       }}
     />
   );
+}
+
+/**
+ * Updates the browser tab icon from the same admin-managed logo URL.
+ * Runs only in the browser; the static root favicon remains the fallback.
+ */
+export function SiteFavicon() {
+  const { data } = useSiteLogoUrl();
+
+  useEffect(() => {
+    const href = data || DEFAULT_LOGO;
+    const existing = Array.from(
+      document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]'),
+    );
+
+    const links = existing.length
+      ? existing
+      : [Object.assign(document.createElement("link"), { rel: "icon" })];
+
+    for (const link of links) {
+      link.href = href;
+      const path = href.split("?")[0].toLowerCase();
+      if (path.endsWith(".png")) link.type = "image/png";
+      else if (path.endsWith(".webp")) link.type = "image/webp";
+      else if (path.endsWith(".gif")) link.type = "image/gif";
+      else if (path.endsWith(".avif")) link.type = "image/avif";
+      else if (path.endsWith(".svg")) link.type = "image/svg+xml";
+      else link.type = "image/jpeg";
+      if (!link.isConnected) document.head.appendChild(link);
+    }
+  }, [data]);
+
+  return null;
 }

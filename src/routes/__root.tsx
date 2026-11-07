@@ -19,6 +19,7 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { ThemeProvider } from "../lib/theme";
 import { Toaster } from "@/components/ui/sonner";
 import { WelcomeModal } from "@/components/WelcomeModal";
+import { SiteFavicon } from "@/components/SiteLogoProvider";
 
 function NotFoundComponent() {
   return (
@@ -106,8 +107,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
       {
         rel: "icon",
-        href: "/zeoxy-favicon.jpeg",
-        type: "image/svg+xml",
+        href: "/logo.jpeg",
+        type: "image/jpeg",
       },
     ],
   }),
@@ -137,6 +138,7 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
+        <SiteFavicon />
         <MaintenanceGate />
         <Toaster />
       </ThemeProvider>
