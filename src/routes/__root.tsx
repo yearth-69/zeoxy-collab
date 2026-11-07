@@ -19,6 +19,7 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { ThemeProvider } from "../lib/theme";
 import { Toaster } from "@/components/ui/sonner";
 import { WelcomeModal } from "@/components/WelcomeModal";
+import { SiteLogo } from "@/components/SiteLogoProvider";
 import { SiteFavicon } from "@/components/SiteLogoProvider";
 
 function NotFoundComponent() {
@@ -148,6 +149,14 @@ function RootComponent() {
 
 function MaintenanceGate() {
   const { isAdmin, ready } = useAuth();
+  const [bootDeadlinePassed, setBootDeadlinePassed] = useState(false);
+
+  // Never keep the entire store hidden forever if auth or Supabase is stalled.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setBootDeadlinePassed(true), 6_500);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const location = useRouterState({
     select: (state) => ({
       pathname: state.location.pathname,
@@ -162,9 +171,12 @@ function MaintenanceGate() {
   } = useQuery({
     ...maintenanceSettingsQuery(),
     // Keep maintenance status fresh without repeatedly downloading all site settings.
-    staleTime: 0,
-    refetchInterval: 15_000,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
+    retry: 1,
+    retryDelay: 800,
   });
 
   const search = location.search as Record<string, unknown>;
@@ -174,17 +186,30 @@ function MaintenanceGate() {
   // Only the restricted sign-in route is public while maintenance is active.
   if (restrictedAdminLogin) return <Outlet />;
 
-  // Avoid briefly exposing the store before auth and maintenance settings load.
+  // Wait briefly for auth + maintenance status, but don't strand visitors here.
   if (isPending || !ready) {
     if (isAdmin) {
       return <><Outlet /><WelcomeModal /></>;
     }
-    return <MaintenanceChecking />;
+    if (!bootDeadlinePassed) {
+      return <StoreLoadingScreen />;
+    }
+
+    console.warn(
+      "[startup] Auth or maintenance check exceeded 6.5s; showing the store while checks continue.",
+    );
+    return <><Outlet /><WelcomeModal /></>;
   }
 
-  // Fail closed if maintenance status cannot be checked; admins retain access.
-  if (isError && !isAdmin) {
-    return <MaintenancePage onRetry={() => void refetch()} />;
+  // If Supabase cannot return any maintenance settings, keep the storefront
+  // usable instead of showing an endless/false maintenance screen.
+  // The query continues to retry in the background and maintenance applies
+  // as soon as a valid enabled setting is received.
+  if (isError && !settings && !isAdmin) {
+    console.warn(
+      "[startup] Maintenance status unavailable; allowing storefront while the query retries.",
+    );
+    return <><Outlet /><WelcomeModal /></>;
   }
 
   if (settings?.maintenance_enabled && !isAdmin) {
@@ -200,15 +225,33 @@ function MaintenanceGate() {
   return <><Outlet /><WelcomeModal /></>;
 }
 
-function MaintenanceChecking() {
+function StoreLoadingScreen() {
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#080d20] px-5 py-10 text-center text-white">
-      <div className="pointer-events-none absolute -left-24 -top-24 size-80 rounded-full bg-violet-600/15 blur-3xl" />
-      <div className="relative flex flex-col items-center gap-3">
-        <span className="grid size-12 place-items-center rounded-2xl border border-white/10 bg-white/5 text-cyan-300">
-          <Wrench className="size-5 animate-pulse" />
+    <main
+      role="status"
+      aria-label="Loading ZEXY STORE"
+      className="relative isolate flex min-h-screen min-h-[100svh] items-center justify-center overflow-hidden bg-[#070b1b]"
+    >
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(circle at 50% 50%, rgba(70,93,180,.16), transparent 34%), radial-gradient(ellipse at 16% 18%, rgba(111,72,255,.12), transparent 40%), radial-gradient(ellipse at 84% 82%, rgba(0,211,226,.09), transparent 38%)",
+        }}
+      />
+
+      <div className="relative grid size-44 place-items-center sm:size-48">
+        <span className="absolute inset-0 rounded-full border border-cyan-200/15 border-t-cyan-200/80 animate-spin motion-reduce:animate-none" />
+        <span className="absolute inset-3 rounded-full border border-violet-200/15 border-b-violet-200/90 animate-[spin_3.8s_linear_infinite_reverse] motion-reduce:animate-none" />
+        <span className="absolute inset-7 rounded-full border border-white/10 border-l-cyan-200/70 animate-[spin_6s_linear_infinite] motion-reduce:animate-none" />
+
+        <span className="relative grid size-[4.75rem] place-items-center overflow-hidden rounded-[1.45rem] border border-white/15 bg-gradient-to-br from-violet-500/25 to-cyan-400/20 p-2 shadow-[0_0_45px_rgba(34,211,238,.16)]">
+          <SiteLogo
+            alt="ZEXY STORE logo"
+            className="size-full rounded-xl object-contain"
+          />
         </span>
-        <p className="text-sm text-slate-300">Checking ZEXY STORE status…</p>
       </div>
     </main>
   );
