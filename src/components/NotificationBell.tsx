@@ -354,7 +354,7 @@ export function NotificationBell() {
             </div>
 
             <div className="shrink-0 border-t border-white/10 px-4 py-2.5 text-center text-[10px] text-slate-500">
-              Zeoxy Store · Updates for your account
+              Zexy Store · Updates for your account
             </div>
           </section>
         </>

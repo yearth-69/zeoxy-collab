@@ -89,6 +89,10 @@ function Home() {
                 alt={active.title}
                 width={1600}
                 height={640}
+                loading="eager"
+                fetchPriority="high"
+                decoding="async"
+                sizes="(max-width: 640px) 100vw, (max-width: 1152px) 100vw, 1152px"
                 className="block h-auto w-full sm:absolute sm:inset-0 sm:size-full sm:object-cover"
               />
             ) : null}
@@ -152,6 +156,7 @@ function Home() {
                   src={game.cover_url}
                   alt={game.name}
                   loading="lazy"
+                  decoding="async"
                   width={512}
                   height={512}
                   className="aspect-square w-full rounded-xl object-cover"

@@ -15,7 +15,6 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { HamburgerButton } from "@/components/MobileMenu";
 import { NotificationBell } from "@/components/NotificationBell";
-import { SiteLogo } from "@/components/SiteLogoProvider";
 
 export function SiteHeader({ onMenuClick }: { onMenuClick: () => void }) {
   const { theme, toggle } = useTheme();
@@ -46,7 +45,13 @@ export function SiteHeader({ onMenuClick }: { onMenuClick: () => void }) {
 
           <Link to="/" className="flex min-w-0 items-center gap-2" aria-label="ZEXY STORE home">
             <div className="size-9 shrink-0 overflow-hidden rounded-xl">
-              <SiteLogo alt="ZEXY STORE" width={36} height={36} className="h-full w-full object-contain" />
+              <img
+                src="/logo.jpeg"
+                alt="ZEXY STORE"
+                width={36}
+                height={36}
+                className="h-full w-full object-contain"
+              />
             </div>
 
             <div className="min-w-0">
@@ -158,6 +163,7 @@ export function SiteHeader({ onMenuClick }: { onMenuClick: () => void }) {
           </button>
         </nav>
       </header>
+
   );
 }
 

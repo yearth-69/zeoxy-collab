@@ -2065,11 +2065,6 @@ function TopUpPage() {
 
                           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs font-medium text-subtle">
                             <span className="min-w-0 max-w-full break-words">{p.label}</span>
-                            {p.package_type === "bundle" ? (
-                              <span className="inline-flex shrink-0 whitespace-nowrap rounded-full border border-violet/40 bg-violet/15 px-1.5 py-0.5 text-[9px] font-bold uppercase leading-none text-violet">
-                                Bundle
-                              </span>
-                            ) : null}
                           </div>
 
 

@@ -27,7 +27,7 @@ let welcomePopupClaimedForDocument = false;
 
 const POPUP_TITLE = "DON'T MISS THE NEXT DROP!";
 const POPUP_SUBTITLE =
-  "Join the official Zeoxy WhatsApp Channel and unlock access to exclusive deals, coupon giveaways and the latest updates.";
+  "Join the official Zexy WhatsApp Channel and unlock access to exclusive deals, coupon giveaways and the latest updates.";
 
 export function WelcomeModal() {
   const getContent = useServerFn(getPublicWelcomeContent);
@@ -163,7 +163,7 @@ export function WelcomeModal() {
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(59,130,246,.35),transparent_65%)]" />
             <img
               src="/welcome-popup-art.png"
-              alt="Zeoxy exclusive coupons and rewards"
+              alt="Zexy exclusive coupons and rewards"
               width={600}
               height={300}
               className="relative z-[1] h-full w-full object-contain"
@@ -178,7 +178,7 @@ export function WelcomeModal() {
             id="zeoxy-welcome-title"
             className="mt-3 font-display text-xl font-bold leading-tight text-white sm:text-2xl"
           >
-            {content.title?.trim() && content.title !== "Welcome to Zeoxy Store"
+            {content.title?.trim() && content.title !== "Welcome to Zexy Store"
               ? content.title
               : POPUP_TITLE}
           </h2>

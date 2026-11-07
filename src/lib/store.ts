@@ -202,16 +202,102 @@ export const ordersQuery = (scope: "mine" | "all", userId?: string) =>
     },
   });
 
+export type SiteSettings = {
+  discount_percent: number;
+  maintenance_enabled: boolean;
+  maintenance_message: string;
+  maintenance_until: string | null;
+  contact_order_phone: string;
+  contact_order_email: string;
+  contact_order_whatsapp_url: string;
+  contact_payments_phone: string;
+  contact_payments_email: string;
+  contact_payments_whatsapp_url: string;
+};
+
+export const DEFAULT_MAINTENANCE_MESSAGE =
+  "We're carrying out a little maintenance to make ZEXY STORE better. Please check back soon.";
+
+export const DEFAULT_CONTACT_SETTINGS = {
+  contact_order_phone: "+91 94778 78717",
+  contact_order_email: "admin@zexystore.in",
+  contact_order_whatsapp_url: "https://wa.me/919477878717",
+  contact_payments_phone: "+91 94778 78717",
+  contact_payments_email: "admin@zexystore.in",
+  contact_payments_whatsapp_url: "https://wa.me/919477878717",
+} as const;
+
+
+export type MaintenanceSettings = Pick<
+  SiteSettings,
+  "maintenance_enabled" | "maintenance_message" | "maintenance_until"
+>;
+
+/**
+ * Lightweight settings query used by the global maintenance gate.
+ * Avoid fetching unrelated contact and discount settings every 15 seconds.
+ */
+export const maintenanceSettingsQuery = () =>
+  queryOptions({
+    queryKey: ["site-maintenance-settings"],
+    queryFn: async (): Promise<MaintenanceSettings> => {
+      const { data, error } = await supabase
+        .from("site_settings")
+        .select("maintenance_enabled, maintenance_message, maintenance_until")
+        .maybeSingle();
+
+      if (error) throw error;
+
+      return {
+        maintenance_enabled: Boolean(data?.maintenance_enabled ?? false),
+        maintenance_message:
+          typeof data?.maintenance_message === "string" &&
+          data.maintenance_message.trim()
+            ? data.maintenance_message
+            : DEFAULT_MAINTENANCE_MESSAGE,
+        maintenance_until: data?.maintenance_until ?? null,
+      };
+    },
+  });
+
 export const settingsQuery = () =>
   queryOptions({
     queryKey: ["site-settings"],
-    queryFn: async (): Promise<{ discount_percent: number }> => {
+    queryFn: async (): Promise<SiteSettings> => {
       const { data, error } = await supabase
         .from("site_settings")
-        .select("discount_percent")
+        .select(
+          "discount_percent, maintenance_enabled, maintenance_message, maintenance_until, contact_order_phone, contact_order_email, contact_order_whatsapp_url, contact_payments_phone, contact_payments_email, contact_payments_whatsapp_url",
+        )
         .maybeSingle();
       if (error) throw error;
-      return { discount_percent: Number(data?.discount_percent ?? 0) };
+      return {
+        discount_percent: Number(data?.discount_percent ?? 0),
+        maintenance_enabled: Boolean(data?.maintenance_enabled ?? false),
+        maintenance_message:
+          typeof data?.maintenance_message === "string" && data.maintenance_message.trim()
+            ? data.maintenance_message
+            : DEFAULT_MAINTENANCE_MESSAGE,
+        maintenance_until: data?.maintenance_until ?? null,
+        contact_order_phone:
+          data?.contact_order_phone?.trim() ||
+          DEFAULT_CONTACT_SETTINGS.contact_order_phone,
+        contact_order_email:
+          data?.contact_order_email?.trim() ||
+          DEFAULT_CONTACT_SETTINGS.contact_order_email,
+        contact_order_whatsapp_url:
+          data?.contact_order_whatsapp_url?.trim() ||
+          DEFAULT_CONTACT_SETTINGS.contact_order_whatsapp_url,
+        contact_payments_phone:
+          data?.contact_payments_phone?.trim() ||
+          DEFAULT_CONTACT_SETTINGS.contact_payments_phone,
+        contact_payments_email:
+          data?.contact_payments_email?.trim() ||
+          DEFAULT_CONTACT_SETTINGS.contact_payments_email,
+        contact_payments_whatsapp_url:
+          data?.contact_payments_whatsapp_url?.trim() ||
+          DEFAULT_CONTACT_SETTINGS.contact_payments_whatsapp_url,
+      };
     },
   });
 

@@ -87,6 +87,7 @@ const TABS = [
   "Smile Coin",
   "Discount",
   "Website Settings",
+  "Maintenance",
   "Admins",
 ] as const;
 type Tab = (typeof TABS)[number];
@@ -151,6 +152,7 @@ function AdminPage() {
         {tab === "Smile Coin" && <SmileCoinTab />}
         {tab === "Discount" && <DiscountTab />}
         {tab === "Website Settings" && <WebsiteSettingsTab />}
+        {tab === "Maintenance" && <MaintenanceTab />}
         {tab === "Admins" && <AdminsTab />}
       </div>
     </div>
@@ -575,6 +577,86 @@ function GamesTab() {
 
 /* ---------------- Packages ---------------- */
 
+function SortablePackageRow({
+  p,
+  subtitle,
+  imageUrl,
+  onEdit,
+  onRemove,
+}: {
+  p: Pack;
+  subtitle: string;
+  imageUrl: string | null;
+  onEdit: (pack: Pack) => void;
+  onRemove: (id: string) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: p.id });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+      }}
+      className={`glass-panel flex min-w-0 w-full flex-col gap-3 rounded-2xl p-3 sm:flex-row sm:items-center sm:justify-between ${
+        isDragging ? "opacity-60" : ""
+      }`}
+    >
+      <div className="flex min-w-0 w-full flex-1 items-center gap-3">
+        <button
+          type="button"
+          aria-label={`Reorder ${p.label}`}
+          {...attributes}
+          {...listeners}
+          className="shrink-0 cursor-grab touch-none select-none rounded-lg px-2 py-1 text-faint hover:text-ink active:cursor-grabbing"
+        >
+          ⠿
+        </button>
+
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            alt={p.label}
+            className="size-12 shrink-0 rounded-xl object-cover"
+          />
+        ) : (
+          <div className="size-12 shrink-0 rounded-xl bg-muted" />
+        )}
+
+        <div className="min-w-0">
+          <p className="truncate font-display text-sm font-semibold">{p.label}</p>
+          <p className="truncate text-[11px] text-faint">{subtitle}</p>
+        </div>
+      </div>
+
+      <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:shrink-0">
+        <button
+          type="button"
+          className={btn}
+          onClick={() => onEdit(p)}
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          className={`${btn} border-rose/40 text-rose`}
+          onClick={() => onRemove(p.id)}
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PackagesTab() {
   const qc = useQueryClient();
   const { data: games = [] } = useQuery(gamesQuery({ includeInactive: true }));
@@ -635,8 +717,95 @@ function PackagesTab() {
   ]);
   const [editing, setEditing] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [order, setOrder] = useState<string[]>([]);
+  const [savingOrder, setSavingOrder] = useState(false);
+
   const set = <K extends keyof PackForm>(k: K, v: PackForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
+
+  useEffect(() => {
+    setOrder((previous) => {
+      const isDirty =
+        previous.length === packs.length &&
+        previous.some((id, index) => id !== packs[index]?.id);
+
+      if (!previous.length || !isDirty) {
+        return packs.map((pack) => pack.id);
+      }
+
+      const currentIds = new Set(packs.map((pack) => pack.id));
+      const kept = previous.filter((id) => currentIds.has(id));
+      const keptSet = new Set(kept);
+
+      return [
+        ...kept,
+        ...packs.map((pack) => pack.id).filter((id) => !keptSet.has(id)),
+      ];
+    });
+  }, [packs]);
+
+  const orderedPacks = order
+    .map((id) => packs.find((pack) => pack.id === id))
+    .filter((pack): pack is Pack => Boolean(pack));
+
+  const orderDirty =
+    order.length === packs.length &&
+    order.some((id, index) => id !== packs[index]?.id);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 5 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  function onDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    setOrder((previous) =>
+      arrayMove(
+        previous,
+        previous.indexOf(String(active.id)),
+        previous.indexOf(String(over.id)),
+      ),
+    );
+  }
+
+  async function saveOrder() {
+    if (!gameId || !orderDirty || savingOrder) return;
+
+    setSavingOrder(true);
+    try {
+      const results = await Promise.all(
+        orderedPacks.map((pack, index) =>
+          supabase
+            .from("packages")
+            .update({ sort_order: index })
+            .eq("id", pack.id)
+            .eq("game_id", gameId),
+        ),
+      );
+
+      const failed = results.find((result) => result.error);
+      if (failed?.error) throw failed.error;
+
+      toast.success("Package order saved");
+      await qc.invalidateQueries({ queryKey: ["packages"] });
+    } catch (error) {
+      console.error("[Packages] Save order failed:", error);
+      toast.error(
+        error instanceof Error
+          ? `Could not save package order: ${error.message}`
+          : "Could not save package order.",
+      );
+      await qc.invalidateQueries({ queryKey: ["packages"] });
+    } finally {
+      setSavingOrder(false);
+    }
+  }
 
   function updateComponent(
     index: number,
@@ -842,7 +1011,7 @@ function PackagesTab() {
     <div className="grid gap-5 lg:grid-cols-[1fr_1.1fr] lg:items-start">
       <div className="glass-panel rounded-2xl p-4">
         <label><Label>Game</Label>
-          <select className={field} value={gameId} onChange={(e) => { setGameId(e.target.value); setEditing(null); setForm({ ...empty }); }}>
+          <select className={field} value={gameId} onChange={(e) => { setGameId(e.target.value); setOrder([]); setEditing(null); setForm({ ...empty }); setComponents([{ ...emptyComponent }]); }}>
             {games.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         </label>
@@ -1131,41 +1300,63 @@ function PackagesTab() {
         </div>
       </div>
 
-      <div className="space-y-2">
-        {packs.map((p) => (
-          <div key={p.id} className="glass-panel flex items-center justify-between gap-3 rounded-2xl p-3">
-            <div className="flex min-w-0 items-center gap-3">
-              {((p as Pack & { image_url?: string | null }).image_url) ? (
-                <img
-                  src={(p as Pack & { image_url?: string | null }).image_url ?? ""}
-                  alt={p.label}
-                  className="size-12 shrink-0 rounded-xl object-cover"
-                />
-              ) : (
-                <div className="size-12 shrink-0 rounded-xl bg-muted" />
-              )}
-              <div className="min-w-0">
-                <p className="truncate font-display text-sm font-semibold">{p.label}</p>
-                <p className="text-[11px] text-faint">
-                {money(customerPrice(p, rate, settings?.discount_percent ?? 0))}
-                {(p as any).package_type === "bundle" ? " · bundle" : ""}
-                {p.smile_coin_cost ? ` · ${p.smile_coin_cost} coins` : ""}
-                {(p as Pack & { smile_product_id?: string | number }).smile_product_id
-                  ? ` · Product ${String(
-                      (p as Pack & { smile_product_id?: string | number }).smile_product_id,
-                    )}`
-                  : ""}
-                {p.is_popular ? " · popular" : ""}
-                {p.is_active ? "" : " · hidden"}
-              </p>
-            </div>
-            </div>
-            <div className="flex shrink-0 gap-2">
-              <button className={btn} onClick={() => edit(p)}>Edit</button>
-              <button className={btn} onClick={() => remove(p.id)}>Delete</button>
-            </div>
-          </div>
-        ))}
+      <div className="min-w-0 space-y-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] uppercase tracking-wider text-faint">
+            Drag to reorder packages
+          </p>
+          <button
+            type="button"
+            className={primary}
+            disabled={!orderDirty || savingOrder || !gameId}
+            onClick={() => void saveOrder()}
+          >
+            {savingOrder ? "Saving…" : "Save Order"}
+          </button>
+        </div>
+
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={onDragEnd}
+        >
+          <SortableContext
+            items={orderedPacks.map((pack) => pack.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            {orderedPacks.map((p) => (
+              <SortablePackageRow
+                key={p.id}
+                p={p}
+                imageUrl={
+                  (p as Pack & { image_url?: string | null }).image_url ?? null
+                }
+                subtitle={[
+                  money(customerPrice(p, rate, settings?.discount_percent ?? 0)),
+                  (p as any).package_type === "bundle" ? "bundle" : "",
+                  p.smile_coin_cost ? `${p.smile_coin_cost} coins` : "",
+                  (p as Pack & { smile_product_id?: string | number }).smile_product_id
+                    ? `Product ${String(
+                        (p as Pack & { smile_product_id?: string | number }).smile_product_id,
+                      )}`
+                    : "",
+                  p.is_popular ? "popular" : "",
+                  p.is_active ? "" : "hidden",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+                onEdit={edit}
+                onRemove={remove}
+              />
+            ))}
+          </SortableContext>
+        </DndContext>
+
+        {orderedPacks.length === 0 ? (
+          <p className="rounded-xl border border-white/10 p-4 text-xs text-faint">
+            No packages for this game yet.
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -1884,6 +2075,160 @@ function OrdersTab() {
 }
 
 /* ---------------- Admins ---------------- */
+
+
+/* ---------------- Maintenance ---------------- */
+
+function toDateTimeLocal(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function MaintenanceTab() {
+  const qc = useQueryClient();
+  const { data: settings, isLoading, isError, refetch } = useQuery(settingsQuery());
+  const [enabled, setEnabled] = useState(false);
+  const [message, setMessage] = useState(
+    "We're carrying out a little maintenance to make ZEXY STORE better. Please check back soon.",
+  );
+  const [until, setUntil] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!settings) return;
+    setEnabled(settings.maintenance_enabled);
+    setMessage(settings.maintenance_message);
+    setUntil(toDateTimeLocal(settings.maintenance_until));
+  }, [settings]);
+
+  async function saveMaintenance() {
+    const cleanMessage = message.trim();
+    if (!cleanMessage) {
+      toast.error("Enter a maintenance message for customers.");
+      return;
+    }
+    if (cleanMessage.length > 500) {
+      toast.error("Maintenance message must be 500 characters or fewer.");
+      return;
+    }
+
+    let maintenanceUntil: string | null = null;
+    if (until) {
+      const parsed = new Date(until);
+      if (Number.isNaN(parsed.getTime())) {
+        toast.error("Enter a valid maintenance end time.");
+        return;
+      }
+      if (parsed.getTime() <= Date.now() && enabled) {
+        toast.error("Choose an end time in the future, or leave it blank.");
+        return;
+      }
+      maintenanceUntil = parsed.toISOString();
+    }
+
+    setSaving(true);
+    try {
+      const { error } = await supabase.from("site_settings").upsert(
+        {
+          id: true,
+          maintenance_enabled: enabled,
+          maintenance_message: cleanMessage,
+          maintenance_until: maintenanceUntil,
+        },
+        { onConflict: "id" },
+      );
+      if (error) throw error;
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["site-settings"] }),
+        qc.invalidateQueries({ queryKey: ["site-maintenance-settings"] }),
+      ]);
+      toast.success(
+        enabled
+          ? "Maintenance mode enabled for customers."
+          : "Maintenance mode disabled. The store is live again.",
+      );
+    } catch (error) {
+      console.error("[admin] Could not save maintenance settings:", error);
+      toast.error(error instanceof Error ? error.message : "Could not save maintenance settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-2 lg:items-start">
+      <div className="glass-panel rounded-2xl p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="font-display text-sm font-semibold">Maintenance mode</p>
+            <p className="mt-1 text-[11px] text-faint">Temporarily make the store unavailable to customers.</p>
+          </div>
+          <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${enabled ? "bg-amber-400/10 text-amber-300" : "bg-emerald-400/10 text-emerald-300"}`}>
+            {enabled ? "ENABLED" : "OFF"}
+          </span>
+        </div>
+
+        {isLoading ? (
+          <p className="mt-4 text-xs text-faint">Loading current settings…</p>
+        ) : isError ? (
+          <div className="mt-4 rounded-xl border border-rose-400/20 bg-rose-400/5 p-3">
+            <p className="text-xs text-rose-200">Could not load the current maintenance settings.</p>
+            <button type="button" className={`${btn} mt-2`} onClick={() => void refetch()}>Retry</button>
+          </div>
+        ) : (
+          <>
+            <label className="mt-5 flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[.035] p-3">
+              <span>
+                <span className="block text-xs font-semibold">Enable maintenance</span>
+                <span className="mt-1 block text-[10px] text-faint">Admins retain full website access.</span>
+              </span>
+              <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="size-5 accent-violet-500" />
+            </label>
+
+            <label className="mt-4 block">
+              <Label>Customer message</Label>
+              <textarea className={`${field} min-h-28 resize-y`} maxLength={500} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Tell customers why the store is temporarily unavailable." />
+              <span className="mt-1 block text-right text-[10px] text-faint">{message.length}/500</span>
+            </label>
+
+            <label className="mt-3 block">
+              <Label>Estimated completion (optional)</Label>
+              <input type="datetime-local" className={field} value={until} onChange={(event) => setUntil(event.target.value)} />
+              <span className="mt-1 block text-[10px] leading-relaxed text-faint">
+                The countdown is an estimate. When it reaches zero, the website stays under maintenance until an admin turns it off.
+              </span>
+            </label>
+
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <button type="button" className={btn} onClick={() => {
+                if (!settings) return;
+                setEnabled(settings.maintenance_enabled);
+                setMessage(settings.maintenance_message);
+                setUntil(toDateTimeLocal(settings.maintenance_until));
+              }}>Reset changes</button>
+              <button type="button" className={primary} disabled={saving} onClick={() => void saveMaintenance()}>
+                {saving ? "Saving…" : "Save settings"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="glass-panel rounded-2xl p-4">
+        <p className="font-display text-sm font-semibold">How maintenance behaves</p>
+        <div className="mt-3 space-y-3 text-xs leading-relaxed text-subtle">
+          <p>Customers see only the maintenance notice and countdown.</p>
+          <p>Verified admins can continue using the complete website and Admin Panel.</p>
+          <p>The estimated end time never switches the store back on automatically. An admin must disable maintenance manually.</p>
+          <p>Guests have a restricted admin sign-in route during maintenance. Normal registration is hidden on that route.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function AdminsTab() {
   const listAdminsFn = useServerFn(listAdmins);
@@ -3017,6 +3362,186 @@ function WebsiteSettingsTab() {
           ) : null}
         </div>
       </section>
+
+      <ContactSettingsCard />
     </div>
   );
 }
+
+
+function ContactSettingsCard() {
+  const qc = useQueryClient();
+  const { data: settings, isLoading, error } = useQuery(settingsQuery());
+  const [form, setForm] = useState({
+    contact_order_phone: "+91 94778 78717",
+    contact_order_email: "admin@zexystore.in",
+    contact_order_whatsapp_url: "https://wa.me/919477878717",
+    contact_payments_phone: "+91 94778 78717",
+    contact_payments_email: "admin@zexystore.in",
+    contact_payments_whatsapp_url: "https://wa.me/919477878717",
+  });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!settings) return;
+    setForm({
+      contact_order_phone: settings.contact_order_phone,
+      contact_order_email: settings.contact_order_email,
+      contact_order_whatsapp_url: settings.contact_order_whatsapp_url,
+      contact_payments_phone: settings.contact_payments_phone,
+      contact_payments_email: settings.contact_payments_email,
+      contact_payments_whatsapp_url: settings.contact_payments_whatsapp_url,
+    });
+  }, [settings]);
+
+  function validateContactForm() {
+    const phonePattern = /^\+?[0-9\s().-]{7,22}$/;
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    for (const [label, value] of [
+      ["Order support phone", form.contact_order_phone],
+      ["Payments & resellers phone", form.contact_payments_phone],
+    ] as const) {
+      if (!phonePattern.test(value.trim())) {
+        toast.error(`${label} is not valid.`);
+        return false;
+      }
+    }
+
+    for (const [label, value] of [
+      ["Order support email", form.contact_order_email],
+      ["Payments & resellers email", form.contact_payments_email],
+    ] as const) {
+      if (!emailPattern.test(value.trim())) {
+        toast.error(`${label} is not valid.`);
+        return false;
+      }
+    }
+
+    for (const [label, value] of [
+      ["Order support WhatsApp link", form.contact_order_whatsapp_url],
+      ["Payments & resellers WhatsApp link", form.contact_payments_whatsapp_url],
+    ] as const) {
+      try {
+        const url = new URL(value.trim());
+        if (
+          url.protocol !== "https:" ||
+          !["wa.me", "www.wa.me", "api.whatsapp.com", "www.whatsapp.com"].includes(
+            url.hostname.toLowerCase(),
+          )
+        ) {
+          throw new Error("invalid WhatsApp URL");
+        }
+      } catch {
+        toast.error(`${label} must be a valid HTTPS WhatsApp link.`);
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  async function saveContactSettings() {
+    if (!validateContactForm()) return;
+
+    const payload = {
+      contact_order_phone: form.contact_order_phone.trim(),
+      contact_order_email: form.contact_order_email.trim(),
+      contact_order_whatsapp_url: form.contact_order_whatsapp_url.trim(),
+      contact_payments_phone: form.contact_payments_phone.trim(),
+      contact_payments_email: form.contact_payments_email.trim(),
+      contact_payments_whatsapp_url: form.contact_payments_whatsapp_url.trim(),
+    };
+
+    setSaving(true);
+    try {
+      const { error: saveError } = await supabase
+        .from("site_settings")
+        .upsert({ id: true, ...payload }, { onConflict: "id" });
+
+      if (saveError) throw saveError;
+
+      qc.setQueryData(["site-settings"], (previous: unknown) => {
+        if (!previous || typeof previous !== "object") return previous;
+        return { ...(previous as Record<string, unknown>), ...payload };
+      });
+      await qc.invalidateQueries({ queryKey: ["site-settings"] });
+      toast.success("Contact details updated on the website.");
+    } catch (saveError) {
+      console.error("[website-settings] Contact details update failed:", saveError);
+      toast.error(
+        saveError instanceof Error
+          ? saveError.message
+          : "Could not save contact details.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputField = (label: string, key: keyof typeof form, type = "text") => (
+    <label className="block min-w-0">
+      <Label>{label}</Label>
+      <input
+        type={type}
+        className={field}
+        value={form[key]}
+        onChange={(event) =>
+          setForm((previous) => ({ ...previous, [key]: event.target.value }))
+        }
+        placeholder={label}
+        autoComplete="off"
+      />
+    </label>
+  );
+
+  return (
+    <section className="glass-panel rounded-2xl p-4 sm:p-5">
+      <div>
+        <h2 className="font-display text-sm font-semibold">Contact Information</h2>
+        <p className="mt-1 text-xs leading-relaxed text-faint">
+          Update the phone numbers, email addresses and WhatsApp links shown on
+          the public Contact Us page.
+        </p>
+      </div>
+
+      {isLoading ? (
+        <p className="mt-4 text-xs text-faint">Loading saved contact details…</p>
+      ) : error ? (
+        <p className="mt-4 text-xs text-rose">
+          Could not load contact settings. Refresh the page and try again.
+        </p>
+      ) : (
+        <>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <div className="space-y-3 rounded-xl border border-white/10 bg-white/[.025] p-3">
+              <h3 className="font-display text-xs font-semibold">01 · Order support</h3>
+              {inputField("Phone number", "contact_order_phone", "tel")}
+              {inputField("Email address", "contact_order_email", "email")}
+              {inputField("WhatsApp link", "contact_order_whatsapp_url", "url")}
+            </div>
+
+            <div className="space-y-3 rounded-xl border border-white/10 bg-white/[.025] p-3">
+              <h3 className="font-display text-xs font-semibold">02 · Payments & resellers</h3>
+              {inputField("Phone number", "contact_payments_phone", "tel")}
+              {inputField("Email address", "contact_payments_email", "email")}
+              {inputField("WhatsApp link", "contact_payments_whatsapp_url", "url")}
+            </div>
+          </div>
+
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              className={primary}
+              disabled={saving}
+              onClick={() => void saveContactSettings()}
+            >
+              {saving ? "Saving…" : "Save contact settings"}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+

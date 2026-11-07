@@ -1,14 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, type FormEvent } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageShell } from "@/components/PageShell";
 import { submitContactMessage } from "@/lib/contact.functions";
+import { settingsQuery } from "@/lib/store";
 
 export const Route = createFileRoute("/contact")({
   head: () => ({
     meta: [
-      { title: "Contact Us — Zeoxy TopUp Store" },
+      { title: "Contact Us — Zexy TopUp Store" },
       {
         name: "description",
         content:
@@ -19,25 +21,27 @@ export const Route = createFileRoute("/contact")({
   component: Contact,
 });
 
-const CHANNELS = [
-  {
-    title: "Order support",
-    sub: "Delivery in progress, stuck top-up",
-    phone: "+91 94778 78717",
-    email: "admin@zexystore.in",
-    wa: "https://wa.me/919477878717",
-  },
-  {
-    title: "Payments & resellers",
-    sub: "Failed payments, wholesale accounts",
-    phone: "+91 94778 78717",
-    email: "admin@zexystore.in",
-    wa: "https://wa.me/919477878717",
-  },
-];
+
 
 function Contact() {
   const submitFn = useServerFn(submitContactMessage);
+  const { data: settings } = useQuery(settingsQuery());
+  const channels = [
+    {
+      title: "Order support",
+      sub: "Delivery in progress, stuck top-up",
+      phone: settings?.contact_order_phone ?? "+91 94778 78717",
+      email: settings?.contact_order_email ?? "admin@zexystore.in",
+      wa: settings?.contact_order_whatsapp_url ?? "https://wa.me/919477878717",
+    },
+    {
+      title: "Payments & resellers",
+      sub: "Failed payments, wholesale accounts",
+      phone: settings?.contact_payments_phone ?? "+91 94778 78717",
+      email: settings?.contact_payments_email ?? "admin@zexystore.in",
+      wa: settings?.contact_payments_whatsapp_url ?? "https://wa.me/919477878717",
+    },
+  ];
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -100,7 +104,7 @@ function Contact() {
 
       <section className="mt-6 px-4 sm:px-6">
         <div className="grid gap-3 sm:grid-cols-2">
-          {CHANNELS.map((c, i) => (
+          {channels.map((c, i) => (
             <div key={c.title} className="glass-panel rounded-2xl p-4">
               <span className="font-display text-2xl font-bold text-violet/50">
                 {String(i + 1).padStart(2, "0")}
@@ -111,8 +115,18 @@ function Contact() {
               <p className="mt-1.5 text-xs leading-relaxed text-faint">
                 {c.sub}
               </p>
-              <p className="mt-3 text-sm font-medium text-cyan">{c.phone}</p>
-              <p className="mt-3 text-sm font-medium text-cyan">{c.email}</p>
+              <a
+                href={`tel:${c.phone.replace(/[^+\d]/g, "")}`}
+                className="mt-3 block break-words text-sm font-medium text-cyan hover:underline"
+              >
+                {c.phone}
+              </a>
+              <a
+                href={`mailto:${c.email}`}
+                className="mt-3 block break-words text-sm font-medium text-cyan hover:underline"
+              >
+                {c.email}
+              </a>
               <a
                 href={c.wa}
                 target="_blank"

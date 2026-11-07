@@ -150,7 +150,7 @@
 
   body {
     background: var(--page-gradient);
-    background-attachment: fixed;
+    background-attachment: scroll;
     color: var(--color-foreground);
     font-family: var(--font-body);
     -webkit-font-smoothing: antialiased;
@@ -196,4 +196,37 @@
 
 @utility animate-floaty-slow {
   animation: floaty 9s ease-in-out infinite reverse;
+}
+
+
+/*
+ * Mobile rendering optimizations.
+ * Keep the frosted-neon appearance while reducing expensive blur and motion
+ * on smaller GPUs and slower devices.
+ */
+@media (max-width: 767px) {
+  .glass-panel {
+    -webkit-backdrop-filter: blur(8px) saturate(120%);
+    backdrop-filter: blur(8px) saturate(120%);
+  }
+
+  .glow-orb {
+    filter: none;
+  }
+
+  .animate-floaty,
+  .animate-floaty-slow {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

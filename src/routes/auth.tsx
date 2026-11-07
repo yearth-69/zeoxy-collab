@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Aurora } from "@/components/Aurora";
-import { SiteLogo } from "@/components/SiteLogoProvider";
 import { supabase } from "@/integrations/supabase/client";
 import {
   DEFAULT_COUNTRY,
@@ -22,11 +21,6 @@ import {
   type IdentifierType,
 } from "@/lib/auth-rules";
 import {
-  startPhonePasswordRecovery,
-  resendPhonePasswordRecovery,
-  verifyPhonePasswordRecovery,
-} from "@/lib/auth.recovery.functions";
-import {
   checkUsername,
   getAccountStatus,
   resendRegistrationOtp,
@@ -36,7 +30,10 @@ import {
   verifyRegistration,
 } from "@/lib/auth.functions";
 
-const searchSchema = z.object({ redirect: z.string().optional() });
+const searchSchema = z.object({
+  redirect: z.string().optional(),
+  maintenanceAdmin: z.enum(["1"]).optional(),
+});
 
 const LOGIN_FAILED = "Wrong username, email, mobile number or password";
 const GENERIC_ERROR = "Something went wrong. Please try again.";
@@ -62,11 +59,10 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
-type Step = "signup" | "signin" | "otp" | "addEmail" | "forgotPassword" | "recoveryOtp";
+type Step = "signup" | "signin" | "otp" | "addEmail" | "forgotPassword";
 type Field = "username" | "email" | "phone" | "password" | "otp" | "identifier" | "name";
 type Errors = Partial<Record<Field, string>>;
 type Pending = { registrationId: string; maskedPhone: string };
-type RecoveryPending = { recoveryId: string; maskedPhone: string };
 type UsernameState = {
   status: "idle" | "checking" | "available" | "taken" | "invalid" | "unknown";
   message: string;
@@ -135,7 +131,9 @@ function useCountdown(): [number, (seconds: number) => void] {
 function AuthPage() {
   const navigate = useNavigate();
   const search = Route.useSearch();
-  const [step, setStep] = useState<Step>("signup");
+  const [step, setStep] = useState<Step>(
+    search.maintenanceAdmin === "1" ? "signin" : "signup",
+  );
   const [identifierType, setIdentifierType] = useState<IdentifierType>("username");
   const [identifier, setIdentifier] = useState("");
   const [username, setUsername] = useState("");
@@ -145,7 +143,8 @@ function AuthPage() {
   const [password, setPassword] = useState("");
   const [otp, setOtp] = useState("");
   const [newEmail, setNewEmail] = useState("");
-  const [recoveryPending, setRecoveryPending] = useState<RecoveryPending | null>(null);
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [resetEmailSent, setResetEmailSent] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
   const [errors, setErrors] = useState<Errors>({});
   const [usernameState, setUsernameState] = useState<UsernameState>(IDLE_USERNAME);
@@ -159,9 +158,6 @@ function AuthPage() {
   const resendFn = useServerFn(resendRegistrationOtp);
   const verifyFn = useServerFn(verifyRegistration);
   const checkUsernameFn = useServerFn(checkUsername);
-  const startPhoneRecoveryFn = useServerFn(startPhonePasswordRecovery);
-  const resendPhoneRecoveryFn = useServerFn(resendPhonePasswordRecovery);
-  const verifyPhoneRecoveryFn = useServerFn(verifyPhonePasswordRecovery);
 
   const checkUsernameRef = useRef(checkUsernameFn);
   checkUsernameRef.current = checkUsernameFn;
@@ -235,7 +231,6 @@ function AuthPage() {
     setPassword("");
     setOtp("");
     if (next !== "otp") setPending(null);
-    if (next !== "recoveryOtp") setRecoveryPending(null);
   }
 
   async function run(action: () => Promise<void>) {
@@ -398,86 +393,35 @@ function AuthPage() {
       goNext();
     });
 
-  const startPhoneRecovery = () =>
+  const sendPasswordReset = () =>
     run(async () => {
-      const mobile = normalizeMobile(country, phone);
-      if (!mobile.ok) {
-        showErrors({ phone: mobile.message });
+      const parsed = emailSchema.safeParse(recoveryEmail.trim());
+      if (!parsed.success) {
+        showErrors({ email: "Enter a valid email address" });
         return;
       }
 
       setErrors({});
-      const res = await startPhoneRecoveryFn({
-        data: { phoneCountry: country, phoneNumber: phone },
+      const redirectTo = `${window.location.origin}/reset-password?flow=recovery`;
+      const { error } = await supabase.auth.resetPasswordForEmail(parsed.data, {
+        redirectTo,
       });
-      if (!res.ok) {
-        if (res.code === "PHONE_NOT_FOUND") {
-          showErrors({ phone: "This number is not associated with any account." });
-        } else {
-          showErrors({ phone: res.message });
-        }
-        return;
-      }
 
-      setRecoveryPending({ recoveryId: res.recoveryId, maskedPhone: res.maskedPhone });
-      setOtp("");
-      startResendTimer(res.resendIn);
-      setStep("recoveryOtp");
-      toast.success(`Verification code sent to ${res.maskedPhone}`);
-    });
-
-  const resendPhoneRecovery = () =>
-    run(async () => {
-      if (!recoveryPending) return;
-      const res = await resendPhoneRecoveryFn({
-        data: { recoveryId: recoveryPending.recoveryId },
-      });
-      if (!res.ok) {
-        toast.error(res.message);
-        if (res.code === "NOT_FOUND") goToStep("forgotPassword");
-        return;
-      }
-      setOtp("");
-      setErrors({});
-      startResendTimer(res.resendIn);
-      toast.success(`New code sent to ${res.maskedPhone}`);
-    });
-
-  const verifyPhoneRecovery = () =>
-    run(async () => {
-      if (!recoveryPending) return;
-      if (!new RegExp(`^\\d{${OTP_LENGTH}}$`).test(otp)) {
-        showErrors({ otp: `Enter the ${OTP_LENGTH}-digit code` });
-        return;
-      }
-
-      const res = await verifyPhoneRecoveryFn({
-        data: { recoveryId: recoveryPending.recoveryId, otp },
-      });
-      if (!res.ok) {
-        showErrors({ otp: res.message });
-        if (res.code === "OTP_EXPIRED" || res.code === "OTP_ATTEMPTS" || res.code === "NOT_FOUND") {
-          setOtp("");
-        }
-        if (res.code === "NOT_FOUND") {
-          setRecoveryPending(null);
-          setStep("forgotPassword");
-        }
-        return;
-      }
-
-      try {
-        window.sessionStorage.setItem(
-          "zeoxy_phone_password_recovery",
-          JSON.stringify({ recoveryId: recoveryPending.recoveryId, resetToken: res.resetToken }),
+      if (error) {
+        console.error("[auth] Password reset email failed:", error);
+        toast.error(
+          error.status === 429
+            ? "Too many reset requests. Please wait a few minutes."
+            : "Could not send the reset email. Please try again.",
         );
-      } catch {
-        toast.error("Could not prepare the secure reset session. Please try again.");
         return;
       }
 
-      setOtp("");
-      navigate({ to: "/reset-password", replace: true });
+      // Do not reveal whether the submitted email has an account.
+      setResetEmailSent(true);
+      toast.success(
+        "If an account exists for this email, a password reset link has been sent.",
+      );
     });
 
   const saveEmail = () =>
@@ -506,8 +450,7 @@ function AuthPage() {
     else if (step === "signin") void signIn();
     else if (step === "otp") void verify();
     else if (step === "addEmail") void saveEmail();
-    else if (step === "forgotPassword") void startPhoneRecovery();
-    else void verifyPhoneRecovery();
+    else void sendPasswordReset();
   }
 
   const field =
@@ -541,11 +484,7 @@ function AuthPage() {
     ],
     forgotPassword: [
       "Forgot password?",
-      "Enter the mobile number linked to your existing Zeoxy account.",
-    ],
-    recoveryOtp: [
-      "Verify your mobile",
-      `Enter the ${OTP_LENGTH}-digit recovery code sent to ${recoveryPending?.maskedPhone ?? "your mobile"}.`,
+      "Enter your registered email and we'll send you a secure reset link.",
     ],
   };
 
@@ -554,8 +493,7 @@ function AuthPage() {
     signin: ["Log in", "Logging in…"],
     otp: ["Verify & create account", "Verifying…"],
     addEmail: ["Save email", "Saving…"],
-    forgotPassword: ["Send verification code", "Sending code…"],
-    recoveryOtp: ["Verify & continue", "Verifying code…"],
+    forgotPassword: ["Send reset link", "Sending reset link…"],
   };
 
   return (
@@ -564,7 +502,11 @@ function AuthPage() {
       <div className="glass-panel relative z-10 w-full max-w-sm rounded-3xl p-6">
         <Link to="/" className="flex items-center gap-2">
           <div className="size-9 shrink-0 overflow-hidden rounded-xl">
-            <SiteLogo alt="ZEXY STORE" className="h-full w-full object-contain" />
+            <img
+              src="/logo.jpeg"
+              alt="ZEXY STORE"
+              className="h-full w-full object-contain"
+            />
           </div>
           <div>
             <p className="font-display text-base font-semibold leading-none">ZEXY STORE</p>
@@ -585,6 +527,10 @@ function AuthPage() {
             >
               Back to login
             </button>
+          ) : search.maintenanceAdmin === "1" ? (
+            <span className="rounded-full border border-cyan/20 bg-cyan/10 px-3 py-1.5 text-[10px] font-semibold text-cyan">
+              ADMIN ACCESS
+            </span>
           ) : step === "signup" || step === "signin" ? (
             <button
               type="button"
@@ -793,9 +739,8 @@ function AuthPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setRecoveryPending(null);
-                  setOtp("");
-                  setErrors({});
+                  setRecoveryEmail(identifierType === "email" ? identifier.trim() : "");
+                  setResetEmailSent(false);
                   goToStep("forgotPassword");
                 }}
                 disabled={busy}
@@ -808,69 +753,38 @@ function AuthPage() {
 
           {step === "forgotPassword" ? (
             <div className="mt-5 space-y-2.5">
-              <div className="flex gap-2">
-                <CountryCodeSelect countries={countries} country={country} onChange={pickCountry} />
+              <div className="space-y-1">
                 <input
-                  type="tel"
-                  inputMode="tel"
-                  value={phone}
-                  autoComplete="tel-national"
+                  type="email"
+                  inputMode="email"
+                  value={recoveryEmail}
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   required
                   aria-required="true"
                   onChange={(e) => {
-                    setPhone(e.target.value.replace(/[^\d\s+().-]/g, "").slice(0, 25));
-                    clearError("phone");
+                    setRecoveryEmail(e.target.value);
+                    setResetEmailSent(false);
+                    clearError("email");
                   }}
-                  placeholder="Registered mobile number"
-                  aria-label="Registered mobile number"
-                  className={inputClass("phone", "min-w-0 flex-1")}
+                  placeholder="Registered email address"
+                  aria-label="Registered email address"
+                  className={inputClass("email")}
                 />
+                <FieldError message={errors.email} />
               </div>
-              <FieldError message={errors.phone} />
-              <p className={hint}>Only a mobile number already associated with a Zeoxy account can receive a recovery code.</p>
-            </div>
-          ) : null}
 
-          {step === "recoveryOtp" ? (
-            <div className="mt-5 space-y-2.5">
-              <input
-                value={otp}
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                autoFocus
-                maxLength={OTP_LENGTH}
-                onChange={(e) => {
-                  setOtp(e.target.value.replace(/\D/g, "").slice(0, OTP_LENGTH));
-                  clearError("otp");
-                }}
-                placeholder={"•".repeat(OTP_LENGTH)}
-                aria-label="Password recovery verification code"
-                className={inputClass("otp", "text-center font-display text-lg tracking-[0.5em]")}
-              />
-              <FieldError message={errors.otp} />
-              <div className="flex items-center justify-between gap-3 px-1 text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => void resendPhoneRecovery()}
-                  disabled={busy || resendIn > 0}
-                  className="font-medium underline-offset-2 hover:underline disabled:text-faint disabled:no-underline"
-                >
-                  {resendIn > 0 ? `Resend code in ${resendIn}s` : "Resend code"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecoveryPending(null);
-                    setOtp("");
-                    setErrors({});
-                    setStep("forgotPassword");
-                  }}
-                  disabled={busy}
-                  className="text-faint underline-offset-2 hover:underline"
-                >
-                  Change number
-                </button>
-              </div>
+              {resetEmailSent ? (
+                <p className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2.5 text-[11px] leading-relaxed text-emerald-200">
+                  Check your inbox and spam folder for the password reset link.
+                  You can request another link if needed.
+                </p>
+              ) : (
+                <p className={hint}>
+                  Use the email address linked to your Zeoxy account.
+                </p>
+              )}
             </div>
           ) : null}
 
@@ -943,7 +857,7 @@ function AuthPage() {
             disabled={busy}
             className="brand-gradient mt-3 w-full rounded-2xl py-3.5 font-display text-sm font-semibold text-ink disabled:opacity-50"
           >
-            {busy ? submitLabel[step][1] : submitLabel[step][0]}
+            {busy ? submitLabel[step][1] : step === "forgotPassword" && resetEmailSent ? "Resend reset link" : submitLabel[step][0]}
           </button>
 
           {step === "addEmail" ? (
@@ -961,4 +875,3 @@ function AuthPage() {
     </div>
   );
 }
-
