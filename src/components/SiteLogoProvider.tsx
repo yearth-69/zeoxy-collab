@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
 export const SITE_LOGO_QUERY_KEY = ["site-logo-url"] as const;
-const DEFAULT_LOGO = "/logo.jpeg";
 
 async function fetchSiteLogoUrl(): Promise<string | null> {
   const { data, error } = await (supabase as any)
@@ -13,13 +12,17 @@ async function fetchSiteLogoUrl(): Promise<string | null> {
     .maybeSingle();
 
   if (error) {
-    console.error("[site-logo] Could not load website logo:", error);
+    console.error("[site-logo] Supabase logo lookup failed:", error);
     throw error;
   }
 
-  return typeof data?.logo_url === "string" && data.logo_url.trim()
-    ? data.logo_url.trim()
-    : null;
+  const url = typeof data?.logo_url === "string" ? data.logo_url.trim() : "";
+  if (!url) {
+    console.warn("[site-logo] site_settings.logo_url is empty.");
+    return null;
+  }
+
+  return url;
 }
 
 function useSiteLogoUrl() {
@@ -27,60 +30,111 @@ function useSiteLogoUrl() {
     queryKey: SITE_LOGO_QUERY_KEY,
     queryFn: fetchSiteLogoUrl,
     staleTime: 60_000,
+    refetchOnMount: true,
     refetchOnWindowFocus: true,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(500 * 2 ** attempt, 2_000),
   });
 }
 
 type SiteLogoProps = Omit<ImgHTMLAttributes<HTMLImageElement>, "src">;
 
-export function SiteLogo({ alt = "ZEXY STORE", onError, ...props }: SiteLogoProps) {
+/**
+ * Only displays the URL saved in Supabase.
+ * Existing cached data remains visible during background refreshes.
+ * If Supabase has no logo or the image fails, nothing is substituted.
+ */
+export function SiteLogo({
+  alt = "ZEXY STORE",
+  onError,
+  ...props
+}: SiteLogoProps) {
   const { data } = useSiteLogoUrl();
-  const source = data || DEFAULT_LOGO;
-  const [failedSource, setFailedSource] = useState<string | null>(null);
-  const displayedSource = failedSource === source ? DEFAULT_LOGO : source;
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFailedUrl(null);
+  }, [data]);
+
+  if (!data || failedUrl === data) return null;
 
   return (
     <img
       {...props}
-      src={displayedSource}
+      src={data}
       alt={alt}
       onError={(event) => {
-        if (displayedSource !== DEFAULT_LOGO) setFailedSource(source);
+        console.error("[site-logo] Saved Supabase image URL failed to load:", data);
+        setFailedUrl(data);
         onError?.(event);
       }}
     />
   );
 }
 
+function faviconMimeType(url: string): string | undefined {
+  const pathname = url.split("?")[0]?.toLowerCase() ?? "";
+  if (pathname.endsWith(".png")) return "image/png";
+  if (pathname.endsWith(".webp")) return "image/webp";
+  if (pathname.endsWith(".gif")) return "image/gif";
+  if (pathname.endsWith(".avif")) return "image/avif";
+  if (pathname.endsWith(".svg")) return "image/svg+xml";
+  if (pathname.endsWith(".jpg") || pathname.endsWith(".jpeg")) return "image/jpeg";
+  return undefined;
+}
+
+function cacheBustedFaviconUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set("favicon_version", "zexy-logo-v1");
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 /**
- * Updates the browser tab icon from the same admin-managed logo URL.
- * Runs only in the browser; the static root favicon remains the fallback.
+ * Uses only the saved Supabase logo URL for the browser favicon.
+ * No public-folder or hardcoded favicon is used as a fallback.
  */
 export function SiteFavicon() {
-  const { data } = useSiteLogoUrl();
+  const { data, isSuccess, isError } = useSiteLogoUrl();
 
   useEffect(() => {
-    const href = data || DEFAULT_LOGO;
     const existing = Array.from(
       document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]'),
     );
 
-    const links = existing.length
-      ? existing
-      : [Object.assign(document.createElement("link"), { rel: "icon" })];
+    // During the first fetch, don't remove an icon already applied from a
+    // previously successful Supabase response. Static declarations are
+    // removed once the lookup has a definitive result.
+    if (!isSuccess && !isError) return;
 
-    for (const link of links) {
-      link.href = href;
-      const path = href.split("?")[0].toLowerCase();
-      if (path.endsWith(".png")) link.type = "image/png";
-      else if (path.endsWith(".webp")) link.type = "image/webp";
-      else if (path.endsWith(".gif")) link.type = "image/gif";
-      else if (path.endsWith(".avif")) link.type = "image/avif";
-      else if (path.endsWith(".svg")) link.type = "image/svg+xml";
-      else link.type = "image/jpeg";
-      if (!link.isConnected) document.head.appendChild(link);
+    if (!data) {
+      existing.forEach((link) => link.remove());
+      return;
     }
-  }, [data]);
+
+    let favicon = document.querySelector<HTMLLinkElement>(
+      'link[data-site-logo-favicon="true"]',
+    );
+
+    if (!favicon) {
+      favicon = document.createElement("link");
+      favicon.rel = "icon";
+      favicon.dataset.siteLogoFavicon = "true";
+      document.head.appendChild(favicon);
+    }
+
+    favicon.href = cacheBustedFaviconUrl(data);
+    const mime = faviconMimeType(data);
+    if (mime) favicon.type = mime;
+    else favicon.removeAttribute("type");
+
+    existing.forEach((link) => {
+      if (link !== favicon) link.remove();
+    });
+  }, [data, isSuccess, isError]);
 
   return null;
 }

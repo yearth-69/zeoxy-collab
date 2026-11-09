@@ -8,7 +8,7 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Clock3, RefreshCw, Wrench } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
@@ -19,7 +19,6 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { ThemeProvider } from "../lib/theme";
 import { Toaster } from "@/components/ui/sonner";
 import { WelcomeModal } from "@/components/WelcomeModal";
-import { SiteLogo } from "@/components/SiteLogoProvider";
 import { SiteFavicon } from "@/components/SiteLogoProvider";
 
 function NotFoundComponent() {
@@ -106,11 +105,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:wght@400;500;600&display=swap",
       },
 
-      {
-        rel: "icon",
-        href: "/logo.jpeg",
-        type: "image/jpeg",
-      },
     ],
   }),
   shellComponent: RootShell,
@@ -150,8 +144,9 @@ function RootComponent() {
 function MaintenanceGate() {
   const { isAdmin, ready } = useAuth();
   const [bootDeadlinePassed, setBootDeadlinePassed] = useState(false);
+  const [loaderFinished, setLoaderFinished] = useState(false);
 
-  // Never keep the entire store hidden forever if auth or Supabase is stalled.
+  // Safety ceiling: slow/unavailable auth or settings must not trap visitors forever.
   useEffect(() => {
     const timer = window.setTimeout(() => setBootDeadlinePassed(true), 6_500);
     return () => window.clearTimeout(timer);
@@ -163,6 +158,7 @@ function MaintenanceGate() {
       search: state.location.search,
     }),
   });
+
   const {
     data: settings,
     isPending,
@@ -170,7 +166,6 @@ function MaintenanceGate() {
     refetch,
   } = useQuery({
     ...maintenanceSettingsQuery(),
-    // Keep maintenance status fresh without repeatedly downloading all site settings.
     staleTime: 30_000,
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
@@ -183,28 +178,36 @@ function MaintenanceGate() {
   const restrictedAdminLogin =
     location.pathname === "/auth" && search["maintenanceAdmin"] === "1";
 
-  // Only the restricted sign-in route is public while maintenance is active.
+  // Restricted sign-in remains reachable during maintenance.
   if (restrictedAdminLogin) return <Outlet />;
 
-  // Wait briefly for auth + maintenance status, but don't strand visitors here.
-  if (isPending || !ready) {
-    if (isAdmin) {
-      return <><Outlet /><WelcomeModal /></>;
-    }
-    if (!bootDeadlinePassed) {
-      return <StoreLoadingScreen />;
-    }
+  // The loader reaches 100 only after auth + maintenance checks settle,
+  // or after the safety ceiling takes the availability fallback path.
+  const startupReady =
+    (!isPending && ready) ||
+    bootDeadlinePassed ||
+    (isError && !settings);
 
+  // Do not mount the actual site (Outlet) until the loader reports 100%.
+  if (!loaderFinished) {
+    return (
+      <StoreLoadingScreen
+        canComplete={startupReady}
+        onComplete={() => setLoaderFinished(true)}
+      />
+    );
+  }
+
+  // If checks exceeded the safety ceiling, allow the storefront rather than
+  // leaving customers stuck indefinitely. Admin status itself remains fail-closed.
+  if ((isPending || !ready) && !isAdmin) {
     console.warn(
-      "[startup] Auth or maintenance check exceeded 6.5s; showing the store while checks continue.",
+      "[startup] Startup safety timeout reached; showing the store after loader reached 100%.",
     );
     return <><Outlet /><WelcomeModal /></>;
   }
 
-  // If Supabase cannot return any maintenance settings, keep the storefront
-  // usable instead of showing an endless/false maintenance screen.
-  // The query continues to retry in the background and maintenance applies
-  // as soon as a valid enabled setting is received.
+  // If settings could not be fetched, keep the store usable while queries retry.
   if (isError && !settings && !isAdmin) {
     console.warn(
       "[startup] Maintenance status unavailable; allowing storefront while the query retries.",
@@ -225,33 +228,194 @@ function MaintenanceGate() {
   return <><Outlet /><WelcomeModal /></>;
 }
 
-function StoreLoadingScreen() {
+function StoreLoadingScreen({
+  canComplete,
+  onComplete,
+}: {
+  canComplete: boolean;
+  onComplete: () => void;
+}) {
+  const percentageRef = useRef<HTMLSpanElement>(null);
+  const progressFillRef = useRef<HTMLDivElement>(null);
+  const progressTrackRef = useRef<HTMLDivElement>(null);
+  const completedRef = useRef(false);
+  const onCompleteRef = useRef(onComplete);
+
+  onCompleteRef.current = onComplete;
+
+  useEffect(() => {
+    let frameId = 0;
+    let previousTime = 0;
+    let progress = 0;
+    let completionHoldStartedAt: number | null = null;
+
+    const renderProgress = (value: number) => {
+      const safeValue = Math.max(0, Math.min(100, value));
+      const rounded = Math.floor(safeValue);
+
+      if (progressFillRef.current) {
+        progressFillRef.current.style.width = `${safeValue}%`;
+      }
+      if (percentageRef.current) {
+        percentageRef.current.textContent = `${rounded}%`;
+      }
+      if (progressTrackRef.current) {
+        progressTrackRef.current.setAttribute("aria-valuenow", String(rounded));
+      }
+    };
+
+    const animate = (now: number) => {
+      if (!previousTime) previousTime = now;
+      // Cap large frame gaps after tab switching so the loader doesn't jump.
+      const deltaSeconds = Math.min((now - previousTime) / 1000, 0.05);
+      previousTime = now;
+
+      if (canComplete) {
+        // Once startup checks are complete, smoothly finish from the current
+        // percentage to 100 in roughly half a second.
+        progress = Math.min(100, progress + deltaSeconds * 120);
+      } else if (progress < 68) {
+        progress = Math.min(68, progress + deltaSeconds * 38);
+      } else if (progress < 90) {
+        progress = Math.min(90, progress + deltaSeconds * 15);
+      } else if (progress < 94) {
+        progress = Math.min(94, progress + deltaSeconds * 4);
+      }
+
+      renderProgress(progress);
+
+      if (progress >= 100) {
+        if (completionHoldStartedAt === null) {
+          completionHoldStartedAt = now;
+        } else if (
+          now - completionHoldStartedAt >= 180 &&
+          !completedRef.current
+        ) {
+          completedRef.current = true;
+          onCompleteRef.current();
+          return;
+        }
+      }
+
+      frameId = window.requestAnimationFrame(animate);
+    };
+
+    frameId = window.requestAnimationFrame(animate);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [canComplete]);
+
   return (
     <main
       role="status"
       aria-label="Loading ZEXY STORE"
-      className="relative isolate flex min-h-screen min-h-[100svh] items-center justify-center overflow-hidden bg-[#070b1b]"
+      aria-live="polite"
+      className="relative isolate flex min-h-screen min-h-[100svh] flex-col items-center justify-between overflow-hidden bg-[#070b1b] px-6 pb-[12vh] pt-[15vh] text-center text-white"
     >
+      <style>{`
+        @keyframes zexy-letter-in {
+          0% {
+            opacity: 0;
+            transform: translate3d(0, 24px, 0) rotate(-8deg) scale(.88);
+          }
+          68% {
+            opacity: 1;
+            transform: translate3d(0, -2px, 0) rotate(1.5deg) scale(1.025);
+          }
+          100% {
+            opacity: 1;
+            transform: translate3d(0, 0, 0) rotate(0) scale(1);
+          }
+        }
+        @keyframes zexy-progress-glow {
+          0%, 100% { opacity: .72; }
+          50% { opacity: 1; }
+        }
+        .zexy-loader-letter {
+          display: inline-block;
+          opacity: 0;
+          backface-visibility: hidden;
+          transform: translateZ(0);
+          will-change: transform, opacity;
+          animation: zexy-letter-in 780ms cubic-bezier(.2,.75,.25,1) forwards;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .zexy-loader-letter {
+            opacity: 1;
+            animation: none;
+            transform: none;
+            will-change: auto;
+          }
+        }
+      `}</style>
+
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(circle at 50% 50%, rgba(70,93,180,.16), transparent 34%), radial-gradient(ellipse at 16% 18%, rgba(111,72,255,.12), transparent 40%), radial-gradient(ellipse at 84% 82%, rgba(0,211,226,.09), transparent 38%)",
+            "radial-gradient(ellipse at 50% 28%, rgba(111,72,255,.15), transparent 38%), radial-gradient(ellipse at 50% 82%, rgba(0,211,226,.08), transparent 42%)",
         }}
       />
 
-      <div className="relative grid size-44 place-items-center sm:size-48">
-        <span className="absolute inset-0 rounded-full border border-cyan-200/15 border-t-cyan-200/80 animate-spin motion-reduce:animate-none" />
-        <span className="absolute inset-3 rounded-full border border-violet-200/15 border-b-violet-200/90 animate-[spin_3.8s_linear_infinite_reverse] motion-reduce:animate-none" />
-        <span className="absolute inset-7 rounded-full border border-white/10 border-l-cyan-200/70 animate-[spin_6s_linear_infinite] motion-reduce:animate-none" />
+      <div className="relative mt-[3vh] flex flex-col items-center">
+        <h1
+          aria-label="ZEXY"
+          className="select-none whitespace-nowrap font-serif text-[clamp(5rem,17vw,8.5rem)] font-bold italic leading-none tracking-[-.055em] text-[#F1E5D7]"
+          style={{
+            fontFamily: '"Brush Script MT", "Segoe Script", "Apple Chancery", cursive',
+            textShadow: "0 5px 36px rgba(190,155,255,.17)",
+          }}
+        >
+          {"ZEXY".split("").map((letter, index) => (
+            <span
+              key={`${letter}-${index}`}
+              aria-hidden="true"
+              className="zexy-loader-letter"
+              style={{ animationDelay: `${index * 120}ms` }}
+            >
+              {letter}
+            </span>
+          ))}
+        </h1>
+      </div>
 
-        <span className="relative grid size-[4.75rem] place-items-center overflow-hidden rounded-[1.45rem] border border-white/15 bg-gradient-to-br from-violet-500/25 to-cyan-400/20 p-2 shadow-[0_0_45px_rgba(34,211,238,.16)]">
-          <SiteLogo
-            alt="ZEXY STORE logo"
-            className="size-full rounded-xl object-contain"
+      <div className="relative flex w-full max-w-[190px] flex-col items-center">
+        <div className="mb-3 flex items-baseline justify-center gap-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-[.28em] text-slate-400">
+            Loading
+          </span>
+          <span
+            ref={percentageRef}
+            className="min-w-[3.5rem] text-right font-display text-[2rem] font-semibold tabular-nums tracking-tight text-[#F1E5D7]"
+            style={{
+              animation: "zexy-progress-glow 1.8s ease-in-out infinite",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            0%
+          </span>
+        </div>
+
+        <div
+          ref={progressTrackRef}
+          className="h-[3px] w-full overflow-hidden rounded-full bg-white/15"
+          role="progressbar"
+          aria-label="Startup progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={0}
+        >
+          <div
+            ref={progressFillRef}
+            className="h-full rounded-full bg-gradient-to-r from-violet-300 via-[#F1E5D7] to-cyan-200"
+            style={{
+              width: "0%",
+              boxShadow: "0 0 14px rgba(186,230,253,.4)",
+              transform: "translateZ(0)",
+              willChange: "width",
+            }}
           />
-        </span>
+        </div>
       </div>
     </main>
   );

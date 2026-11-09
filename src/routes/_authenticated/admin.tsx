@@ -3333,11 +3333,15 @@ function WebsiteSettingsTab() {
           ) : currentLogo ? (
             <img src={currentLogo} alt="Current website logo" className="max-h-28 max-w-full object-contain" />
           ) : (
-            <img src="/logo.jpeg" alt="Default website logo" className="max-h-28 max-w-full object-contain" />
+            <p className="text-xs text-faint">
+              No logo is currently saved in Supabase.
+            </p>
           )}
         </div>
         {error ? (
-          <p className="mt-2 text-xs text-rose">Could not load the saved logo. The default logo is shown.</p>
+          <p className="mt-2 text-xs text-rose">
+            Could not load the saved Supabase logo. No local fallback is used.
+          </p>
         ) : null}
 
         <label className="mt-4 block">
