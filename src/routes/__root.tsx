@@ -309,7 +309,7 @@ function StoreLoadingScreen({
       role="status"
       aria-label="Loading ZEXY STORE"
       aria-live="polite"
-      className="relative isolate flex min-h-screen min-h-[100svh] flex-col items-center justify-between overflow-hidden bg-[#070b1b] px-6 pb-[12vh] pt-[15vh] text-center text-white"
+      className="relative isolate flex min-h-screen min-h-[100svh] flex-col items-center justify-between overflow-hidden bg-[#070b1b] px-6 pb-[12vh] pt-[21vh] text-center text-white sm:pt-[15vh]"
     >
       <style>{`
         @keyframes zexy-letter-in {
