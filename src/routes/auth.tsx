@@ -782,7 +782,7 @@ function AuthPage() {
                 </p>
               ) : (
                 <p className={hint}>
-                  Use the email address linked to your Zeoxy account.
+                  Use the email address linked to your Zexy account.
                 </p>
               )}
             </div>

@@ -775,7 +775,7 @@ export const createUpiPayment = createServerFn({ method: "POST" })
 
       customerEmail ||
 
-      "Zeoxy Customer";
+      "Zexy Customer";
 
     // Mobiles are stored in E.164 (+919876543210) for accounts created after
 
