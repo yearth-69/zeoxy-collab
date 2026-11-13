@@ -2239,40 +2239,69 @@ function AdminsTab() {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const admins = useQuery({ queryKey: ["admins"], queryFn: () => listAdminsFn({}) });
-  const invites = useQuery({ queryKey: ["admin-invites"], queryFn: () => listInvitesFn({}) });
+  const admins = useQuery({
+    queryKey: ["admins"],
+    queryFn: () => listAdminsFn({}),
+    retry: 1,
+    refetchOnWindowFocus: true,
+  });
+  const invites = useQuery({
+    queryKey: ["admin-invites"],
+    queryFn: () => listInvitesFn({}),
+    retry: 1,
+    refetchOnWindowFocus: true,
+  });
+
+  function errorText(error: unknown) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  async function refreshLists() {
+    await Promise.all([
+      admins.refetch(),
+      invites.refetch(),
+    ]);
+  }
 
   async function add() {
     if (!value.trim()) {
       toast.error("Enter a username or email");
       return;
     }
+
     setBusy(true);
     try {
       const res = await addFn({ data: { identifier: value.trim() } });
       if (!res.ok) {
         toast.error(res.message);
-        setBusy(false);
         return;
       }
+
       toast.success("Admin access granted");
       setValue("");
-      qc.invalidateQueries({ queryKey: ["admins"] });
-      qc.invalidateQueries({ queryKey: ["admin-invites"] });
-    } catch {
-      toast.error("Could not add that admin");
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["admins"] }),
+        qc.invalidateQueries({ queryKey: ["admin-invites"] }),
+      ]);
+    } catch (error) {
+      console.error("[AdminsTab] Add admin failed:", error);
+      toast.error(errorText(error));
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   }
 
   async function drop(input: { userId?: string; email?: string }) {
     try {
       await removeFn({ data: input });
-      qc.invalidateQueries({ queryKey: ["admins"] });
-      qc.invalidateQueries({ queryKey: ["admin-invites"] });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["admins"] }),
+        qc.invalidateQueries({ queryKey: ["admin-invites"] }),
+      ]);
       toast.success("Admin access removed");
-    } catch {
-      toast.error("Could not remove that admin");
+    } catch (error) {
+      console.error("[AdminsTab] Remove admin failed:", error);
+      toast.error(errorText(error));
     }
   }
 
@@ -2284,36 +2313,100 @@ function AdminsTab() {
           Enter the username or email of an existing account to give it admin access.
         </p>
         <div className="mt-3 flex gap-2">
-          <input className={field} value={value} onChange={(e) => setValue(e.target.value)} placeholder="username" />
-          <button className={primary} disabled={busy} onClick={add}>Add</button>
+          <input
+            className={field}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            placeholder="username"
+          />
+          <button className={primary} disabled={busy} onClick={() => void add()}>
+            {busy ? "Adding…" : "Add"}
+          </button>
         </div>
       </div>
 
-      <div className="space-y-4">
-        <div>
-          <p className="mb-2 text-[10px] uppercase tracking-wider text-faint">Current admins</p>
-          <div className="space-y-2">
-            {(admins.data ?? []).map((a) => (
-              <div key={a.id} className="glass-panel flex items-center justify-between gap-3 rounded-2xl p-3">
-                <p className="truncate text-xs">{a.username || a.email}</p>
-                <button className={btn} onClick={() => drop({ userId: a.id, email: a.email })}>Remove</button>
-              </div>
-            ))}
-            {admins.data?.length === 0 ? <p className="text-xs text-faint">No admins listed.</p> : null}
+      <div className="space-y-5">
+        <section>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-[10px] uppercase tracking-wider text-faint">Current admins</p>
+            <button type="button" className={btn} onClick={() => void admins.refetch()} disabled={admins.isFetching}>
+              {admins.isFetching ? "Refreshing…" : "Refresh"}
+            </button>
           </div>
-        </div>
-        <div>
-          <p className="mb-2 text-[10px] uppercase tracking-wider text-faint">Pending invites</p>
-          <div className="space-y-2">
-            {(invites.data ?? []).map((i: { id: string; email: string }) => (
-              <div key={i.id} className="glass-panel flex items-center justify-between gap-3 rounded-2xl p-3">
-                <p className="truncate text-xs">{i.email}</p>
-                <button className={btn} onClick={() => drop({ email: i.email })}>Remove</button>
-              </div>
-            ))}
-            {invites.data?.length === 0 ? <p className="text-xs text-faint">No pending invites.</p> : null}
+
+          {admins.isPending ? (
+            <p className="text-xs text-faint">Loading current admins…</p>
+          ) : admins.isError ? (
+            <div className="rounded-xl border border-rose-400/25 bg-rose-400/5 p-3">
+              <p className="text-xs font-medium text-rose-200">Could not load current admins.</p>
+              <p className="mt-1 break-words text-[11px] text-rose-100/80">{errorText(admins.error)}</p>
+              <button type="button" className={`${btn} mt-3`} onClick={() => void admins.refetch()}>
+                Retry
+              </button>
+            </div>
+          ) : admins.data.length === 0 ? (
+            <p className="text-xs text-faint">No admins found in the production database.</p>
+          ) : (
+            <div className="space-y-2">
+              {admins.data.map((admin) => (
+                <div key={admin.id} className="glass-panel flex items-center justify-between gap-3 rounded-2xl p-3">
+                  <p className="min-w-0 truncate text-xs">{admin.username || admin.email || admin.id}</p>
+                  <button
+                    type="button"
+                    className={btn}
+                    onClick={() => void drop({ userId: admin.id, email: admin.email })}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-[10px] uppercase tracking-wider text-faint">Pending invites</p>
+            <button type="button" className={btn} onClick={() => void invites.refetch()} disabled={invites.isFetching}>
+              {invites.isFetching ? "Refreshing…" : "Refresh"}
+            </button>
           </div>
-        </div>
+
+          {invites.isPending ? (
+            <p className="text-xs text-faint">Loading pending invites…</p>
+          ) : invites.isError ? (
+            <div className="rounded-xl border border-rose-400/25 bg-rose-400/5 p-3">
+              <p className="text-xs font-medium text-rose-200">Could not load pending invites.</p>
+              <p className="mt-1 break-words text-[11px] text-rose-100/80">{errorText(invites.error)}</p>
+              <button type="button" className={`${btn} mt-3`} onClick={() => void invites.refetch()}>
+                Retry
+              </button>
+            </div>
+          ) : invites.data.length === 0 ? (
+            <p className="text-xs text-faint">No pending invites found.</p>
+          ) : (
+            <div className="space-y-2">
+              {invites.data.map((invite: { id: string; email: string }) => (
+                <div key={invite.id} className="glass-panel flex items-center justify-between gap-3 rounded-2xl p-3">
+                  <p className="min-w-0 truncate text-xs">{invite.email}</p>
+                  <button
+                    type="button"
+                    className={btn}
+                    onClick={() => void drop({ email: invite.email })}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {(admins.isError || invites.isError) ? (
+          <button type="button" className={primary} onClick={() => void refreshLists()}>
+            Retry both lists
+          </button>
+        ) : null}
       </div>
     </div>
   );

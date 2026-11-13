@@ -35,43 +35,76 @@ async function requireAdmin(
 export const listAdmins = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { supabase, userId } = context;
-    await requireAdmin(supabase as any, userId);
-    const [{ data: roles, error: rolesErr }, { supabaseAdmin }] = await Promise.all([
-      supabase.from("user_roles").select("user_id").eq("role", "admin"),
-      import("@/integrations/supabase/client.server"),
-    ]);
-    if (rolesErr) throw rolesErr;
-    const { data: users, error: usersErr } = await supabaseAdmin.auth.admin.listUsers({
-      page: 1,
-      perPage: 1000,
-    });
-    if (usersErr) throw usersErr;
-    const ids = new Set((roles ?? []).map((r) => r.user_id));
-    const { data: profiles, error: profErr } = await supabaseAdmin
-      .from("profiles")
-      .select("id, username")
-      .in("id", [...ids]);
-    if (profErr) throw profErr;
-    const usernames = new Map((profiles ?? []).map((p) => [p.id, p.username ?? ""]));
-    return (users.users ?? [])
-      .filter((u) => ids.has(u.id))
-      .map((u) => ({
-        id: u.id,
-        email: u.email ?? "",
-        username: usernames.get(u.id) ?? "",
-        created_at: u.created_at,
+    const { userId } = context;
+
+    // Authorize the requesting user before using the privileged client.
+    await requireAdmin(undefined, userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    // Read role rows through the service client so production RLS policies do
+    // not silently hide other admins from an already verified administrator.
+    const { data: roles, error: rolesErr } = await supabaseAdmin
+      .from("user_roles")
+      .select("user_id")
+      .eq("role", "admin");
+
+    if (rolesErr) {
+      console.error("[Admin] Could not list admin roles:", rolesErr);
+      throw new Error(`Could not load admin roles: ${rolesErr.message}`);
+    }
+
+    const ids = new Set((roles ?? []).map((role) => role.user_id));
+    if (ids.size === 0) return [];
+
+    const [{ data: users, error: usersErr }, { data: profiles, error: profErr }] =
+      await Promise.all([
+        supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+        supabaseAdmin.from("profiles").select("id, username").in("id", [...ids]),
+      ]);
+
+    if (usersErr) {
+      console.error("[Admin] Could not list auth users:", usersErr);
+      throw new Error(`Could not load admin accounts: ${usersErr.message}`);
+    }
+    if (profErr) {
+      console.error("[Admin] Could not list admin profiles:", profErr);
+      throw new Error(`Could not load admin profiles: ${profErr.message}`);
+    }
+
+    const usernames = new Map((profiles ?? []).map((profile) => [profile.id, profile.username ?? ""]));
+    return (users?.users ?? [])
+      .filter((user) => ids.has(user.id))
+      .map((user) => ({
+        id: user.id,
+        email: user.email ?? "",
+        username: usernames.get(user.id) ?? "",
+        created_at: user.created_at,
       }));
   });
 
 export const listAdminInvites = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { supabase, userId } = context;
-    await requireAdmin(supabase as any, userId);
-    const { data, error } = await supabase.from("admin_invites").select("*").order("created_at", { ascending: false });
-    if (error) throw error;
-    return (data ?? []).map((i) => ({ ...i, email: i.email.toLowerCase() }));
+    const { userId } = context;
+    await requireAdmin(undefined, userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    // This is also admin-only data: use the service client after authorization
+    // rather than depending on a production user-session RLS SELECT policy.
+    const { data, error } = await supabaseAdmin
+      .from("admin_invites")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("[Admin] Could not list admin invites:", error);
+      throw new Error(`Could not load pending invites: ${error.message}`);
+    }
+
+    return (data ?? []).map((invite) => ({
+      ...invite,
+      email: invite.email.toLowerCase(),
+    }));
   });
 
 export const listClients = createServerFn({ method: "GET" })
@@ -149,9 +182,10 @@ export const removeAdmin = createServerFn({ method: "POST" })
   .inputValidator((data) => removeAdminSchema.parse(data))
   .middleware([requireSupabaseAuth])
   .handler(async ({ context, data }) => {
-    const { supabase, userId } = context;
-    await requireAdmin(supabase as any, userId);
+    const { userId } = context;
+    await requireAdmin(undefined, userId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
     if (data.userId) {
       const { error } = await supabaseAdmin
         .from("user_roles")
@@ -160,10 +194,15 @@ export const removeAdmin = createServerFn({ method: "POST" })
         .eq("role", "admin");
       if (error) throw error;
     }
+
     if (data.email) {
-      const { error } = await supabase.from("admin_invites").delete().ilike("email", data.email);
+      const { error } = await supabaseAdmin
+        .from("admin_invites")
+        .delete()
+        .ilike("email", data.email);
       if (error) throw error;
     }
+
     return { ok: true };
   });
 
